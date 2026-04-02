@@ -20,6 +20,7 @@ SQLite (container-registry.db)     PostgreSQL (fleetcraft_db)
   ├── containers                     ├── containers (synced from SQLite)
   └── (write buffer only)            ├── archived_containers
                                      ├── container_events (event ledger)
+                                     ├── container_exclusions (tombstone)
                                      ├── vessels
                                      ├── vessels_with_containers (cache)
                                      ├── dispatches
@@ -37,7 +38,7 @@ SQLite (container-registry.db)     PostgreSQL (fleetcraft_db)
 ### Who Owns What
 - **SQLite** is a write buffer for container data ONLY. FTU webhooks write here first.
 - **Postgres** is the source of truth for everything. container-sync.js pushes SQLite → Postgres every 30 seconds.
-- Dispatches, drivers, trucks, chassis, events — Postgres ONLY, no SQLite copy.
+- Dispatches, drivers, trucks, chassis, events, exclusions — Postgres ONLY, no SQLite copy.
 
 ---
 
@@ -45,8 +46,8 @@ SQLite (container-registry.db)     PostgreSQL (fleetcraft_db)
 
 When adding a column to the containers table, you MUST update THREE places:
 
-1. **SQLite schema** — `ALTER TABLE containers ADD COLUMN <name> <type>`
-2. **Postgres schema** — `ALTER TABLE containers ADD COLUMN <name> <type>`
+1. **SQLite schema** — `ALTER TABLE containers ADD COLUMN <n> <type>`
+2. **Postgres schema** — `ALTER TABLE containers ADD COLUMN <n> <type>`
 3. **container-sync.js** — add the column to BOTH the SELECT from SQLite AND the INSERT/UPDATE to Postgres
 
 > **Lesson learned:** `findteu_shipment_id` was added to both databases but was missing from container-sync.js INSERT/UPDATE column list. It never synced. FTU unregistration broke because the ID was always null in Postgres.
@@ -62,7 +63,7 @@ const rows = sqliteDb.prepare(`
          empty_terminated_at, last_free_day, customs_hold,
          freight_hold, terminal_hold, equipment_type,
          shipping_line_scac, data_source, findteu_shipment_id,
-         archived_at, archive_reason, updated_at
+         archived_at, archive_reason, user_status, updated_at
          -- ADD NEW COLUMNS HERE
   FROM containers
   WHERE archived_at IS NULL
@@ -70,10 +71,14 @@ const rows = sqliteDb.prepare(`
 
 // Postgres write — every synced column must ALSO be listed here
 // AND in the ON CONFLICT SET clause
+// EXCEPT user_status — NEVER in the SET clause
 ```
 
 ### The Sync Guard
 container-sync.js must NEVER sync rows where `archived_at IS NOT NULL` to the active `containers` table. Those go to `archived_containers` via `syncArchivedContainers()`.
+
+### The Tombstone Check
+Before upserting, container-sync.js loads `container_exclusions` into a Set and skips any container in that Set. This happens BEFORE the SQL upsert guard — defense-in-depth.
 
 ---
 
@@ -89,11 +94,54 @@ These are FTU-derived. Do not invent new values.
 | `EMPTY_RETURNED` | Empty container returned | FTU 'gate in empty' event |
 
 ### Dispatch eligibility
-Only `ui_status = 'AT_PORT'` containers are dispatch-ready. FTU does not provide hold or availability flags — those are blind until Tradlinx is integrated.
+Only containers where `ui_status = 'AT_PORT'` AND `user_status = 'active'` are dispatch-ready. Both conditions required.
 
 ---
 
-## 4. FTU Data Gaps (Always Null)
+## 4. user_status Values
+
+These are user-intent. Only Fleet API endpoints write them.
+
+| user_status | Meaning | Creates exclusion? | FTU unregister? |
+|-------------|---------|-------------------|-----------------|
+| `active` | Normal — sync writers update freely | No | No |
+| `archived` | Removed from view, FTU unregistered | Yes | Yes |
+| `dismissed` | Hidden but FTU still tracking | Yes | No |
+| `held` | Flagged for attention, visible in Held tab | No | No |
+| `flagged` | Marked for review, visible in Flagged tab | No | No |
+
+### CHECK constraint (Postgres):
+```sql
+ALTER TABLE containers ADD CONSTRAINT chk_user_status
+  CHECK (user_status IN ('active', 'archived', 'dismissed', 'held', 'flagged'));
+```
+
+---
+
+## 5. container_exclusions Table (Tombstone)
+
+Defense-in-depth. Sync writers check this BEFORE attempting upsert.
+
+```sql
+CREATE TABLE container_exclusions (
+  container_number  TEXT NOT NULL,
+  org_id            UUID NOT NULL,
+  excluded_at       TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+  reason            TEXT NOT NULL DEFAULT 'archived',
+  PRIMARY KEY (container_number, org_id)
+);
+```
+
+### Rules:
+- Written by Fleet API archive and dismiss endpoints
+- Deleted by Fleet API restore endpoint
+- Read by container-sync.js and ftu-tracker.js at start of each cycle
+- `held` and `flagged` do NOT create exclusion records (containers stay visible in their tab)
+- On restore, exclusion is deleted → next sync cycle resumes normal updates
+
+---
+
+## 6. FTU Data Gaps (Always Null)
 
 These columns exist in both SQLite and Postgres but FTU never populates them:
 
@@ -111,13 +159,13 @@ Do NOT write code that depends on these being non-null from FTU. They will only 
 
 ---
 
-## 5. archived_containers Table
+## 7. archived_containers Table
 
 Permanent record of all archived containers. Never delete from this table.
 
 ### Flow:
 ```
-containers (active) → archived_at set → container-sync moves to archived_containers → deleted from containers
+containers (active) → user_status = 'archived' + archived_at set → container-sync moves to archived_containers → deleted from active containers
 ```
 
 ### Schema matches containers table plus:
@@ -126,7 +174,7 @@ containers (active) → archived_at set → container-sync moves to archived_con
 
 ---
 
-## 6. container_events Table (Event Ledger)
+## 8. container_events Table (Event Ledger)
 
 Append-only. Never update or delete rows.
 
@@ -135,7 +183,7 @@ Append-only. Never update or delete rows.
 | id | uuid PK | Unique event ID |
 | container_number | text | FK to containers |
 | org_id | uuid | Multi-tenant scope |
-| event_type | text | ftu_update, milestone, status_change, archive, restore, etc. |
+| event_type | text | ftu_update, milestone, archive, dismiss, hold, flag, restore, etc. |
 | source | text | ftu, driver, dispatcher, system |
 | payload | jsonb | Full event data |
 | occurred_at | timestamptz | When the event actually happened |
@@ -144,35 +192,67 @@ Append-only. Never update or delete rows.
 ### Rules:
 - Every FTU webhook writes an event
 - Every driver milestone writes an event
-- Every archive/restore writes an event
+- Every user_status transition writes an event (archive, dismiss, hold, flag, restore)
 - Events are the audit trail — if current state is wrong, rebuild from events
 
 ---
 
-## 7. Multi-Tenancy
+## 9. vessels_with_containers Cache Rules
+
+This cache table is rebuilt by vessel-sync.js.
+
+### Container count query MUST filter by user_status:
+```sql
+SELECT vessel_name, COUNT(*) as container_count
+FROM containers
+WHERE vessel_name IS NOT NULL
+  AND (user_status IS NULL OR user_status = 'active')
+GROUP BY vessel_name
+```
+
+### Zero-count cleanup:
+When a vessel's active container count drops to zero, DELETE its row from `vessels_with_containers`:
+```sql
+DELETE FROM vessels_with_containers
+WHERE vessel_name NOT IN (
+  SELECT DISTINCT vessel_name FROM containers
+  WHERE vessel_name IS NOT NULL
+    AND (user_status IS NULL OR user_status = 'active')
+)
+```
+
+### Reappearance:
+When new active containers arrive on a vessel (via FTU webhook → container-sync), vessel-sync rebuilds the cache and the vessel reappears automatically.
+
+### Terminal-agnostic:
+No hardcoded terminal names in any vessel-sync query. Works for 2 terminals or 200.
+
+---
+
+## 10. Multi-Tenancy
 
 - Every table has `org_id` (uuid)
 - Every query filters by `org_id`
-- Composite indexes: always `(org_id, <primary_filter>)` — e.g. `(org_id, container_number)`, `(org_id, ui_status)`
+- Composite indexes: always `(org_id, <primary_filter>)` — e.g. `(org_id, container_number)`, `(org_id, ui_status)`, `(org_id, user_status)`
 - Primary test org: `f8107db3-ecaa-48e1-968d-0e89c6dd8f62`
 
 ---
 
-## 8. Schema Change Checklist
+## 11. Schema Change Checklist
 
 Before deploying any schema change:
 
-- [ ] Write a numbered migration file (see section 10)
+- [ ] Write a numbered migration file (see section 13)
 - [ ] SQLite ALTER TABLE applied (if container-related)
 - [ ] Postgres ALTER TABLE applied via the migration file
-- [ ] container-sync.js column list updated (SELECT + INSERT + UPDATE)
+- [ ] container-sync.js column list updated (SELECT + INSERT + UPDATE — but NEVER user_status in SET)
 - [ ] Fleet API endpoints updated if new column needs to be read/written
 - [ ] Frontend updated if new column needs to be displayed
 - [ ] This skill file updated with the new column
 
 ---
 
-## 9. Postgres Connection
+## 12. Postgres Connection
 
 ```bash
 # From the droplet — TCP required, peer auth fails:
@@ -187,7 +267,7 @@ The `nav_items` column has a NOT NULL constraint. Always default to `[]` (empty 
 
 ---
 
-## 10. Schema as Code — Migration Files
+## 13. Schema as Code — Migration Files
 
 > **Rule:** Never run ad-hoc ALTER TABLE directly in psql. Every schema change is a numbered SQL file committed to Git.
 
@@ -195,9 +275,7 @@ The `nav_items` column has a NOT NULL constraint. Always default to `[]` (empty 
 ```
 fleetcraft-api/
   migrations/
-    001_initial_schema.sql
-    002_add_container_events.sql
-    003_add_user_status.sql
+    001_user_status_lane_separation.sql
     ...
 ```
 

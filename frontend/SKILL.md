@@ -89,7 +89,50 @@ Map `ui_status` to badge colors:
 | `EMPTY_RETURNED` | Gray — lifecycle complete |
 
 ### Dispatch button visibility
-Show "Dispatch" button ONLY when `available_for_pickup = true` AND no existing dispatch for that container.
+Show "Dispatch" button ONLY when `available_for_pickup = true` AND `user_status = 'active'` AND no existing dispatch for that container.
 
 ### org_id
 Always pass `org_id` as query parameter on every API call. Primary test org: `f8107db3-ecaa-48e1-968d-0e89c6dd8f62`.
+
+---
+
+## 5. Container Filter Tabs (user_status)
+
+ContainerTracking.tsx displays containers in tabs based on `user_status`:
+
+```
+[Active (12)] [Held (2)] [Flagged (1)] [Dismissed (3)] [Archived (8)]
+```
+
+### API calls per tab:
+| Tab | API Call |
+|-----|----------|
+| Active (default) | `GET /api/containers/list?org_id=X&status=active` |
+| Held | `GET /api/containers/list?org_id=X&status=held` |
+| Flagged | `GET /api/containers/list?org_id=X&status=flagged` |
+| Dismissed | `GET /api/containers/list?org_id=X&status=dismissed` |
+| Archived | `GET /api/containers/list?org_id=X&status=archived` |
+
+### Count badges
+Each tab shows a count badge. Fetch counts on page load with `?status=all` or separate count endpoint, then update locally when actions are taken.
+
+### Action buttons per tab:
+| Current Tab | Available Actions |
+|-------------|-------------------|
+| Active | [Hold] [Flag] [Dismiss] [Archive] |
+| Held | [Restore] [Archive] |
+| Flagged | [Restore] [Archive] |
+| Dismissed | [Restore] |
+| Archived | [Restore] |
+
+### Action endpoints:
+| Action | Endpoint | On success |
+|--------|----------|------------|
+| Archive | `POST /api/containers/archive` | Remove from current tab, increment Archived count |
+| Dismiss | `POST /api/containers/dismiss` | Remove from current tab, increment Dismissed count |
+| Hold | `POST /api/containers/hold` | Remove from Active tab, increment Held count |
+| Flag | `POST /api/containers/flag` | Remove from Active tab, increment Flagged count |
+| Restore | `POST /api/containers/restore` | Remove from current tab, increment Active count |
+
+### Error handling:
+On any action error, show toast with the server's error message. Do NOT remove the row from the list — let the user retry.
