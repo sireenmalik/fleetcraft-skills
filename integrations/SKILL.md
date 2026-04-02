@@ -1,0 +1,131 @@
+---
+name: fleetcraft-integrations
+description: >
+  FleetCraft external API integration rules. Use this skill when working with
+  FTU (FindTEU) webhooks, AIS vessel tracking, HERE Technologies (routing,
+  geofencing, maps), Resend email, Expo push notifications, or any external
+  API. Prevents misconfiguration of webhook handlers, AIS filtering bugs,
+  and API auth issues.
+---
+
+# FleetCraft Integrations — External API Rules
+
+---
+
+## 1. FTU (FindTEU) — Container Tracking
+
+### Status: ACTIVE (account #14978)
+- Event-based webhook API — NOT polling
+- `ftu-tracker.js` is cache-refresh only, it does NOT call FTU API directly
+- Webhooks arrive at Fleet API → write to SQLite → container-sync → Postgres
+
+### Webhook handler rules (in server.js):
+1. Validate the payload
+2. Check `archived_containers` — if container exists there, do NOT re-insert
+3. Write to SQLite first (source of truth)
+4. When FTU sends `completed: true`, set `archived_at` in SQLite
+
+### FTU API endpoints used:
+- `POST /container/tracking` — register new container
+- `DELETE /container/subscription/{findteu_shipment_id}` — unregister on archive
+- `GET /container/subscriptions` — list active subscriptions
+- `GET /settings/info` — check quota (`used_this_month`)
+
+### Auth header:
+```javascript
+headers: {
+  'Content-Type': 'application/json',
+  'x-api-key': process.env.FTU_API_KEY
+}
+```
+
+### T49 (Terminal 49): DEACTIVATED
+Never reference `t49-container-tracker.js`, T49 API keys, or T49 endpoints. All T49 code is dead code.
+
+---
+
+## 2. AISStream — Vessel Tracking
+
+### Status: ACTIVE
+- WebSocket connection to AISStream
+- Bounding box covers WA terminals + North Pacific shipping lanes
+- Writes to Postgres `vessels` table
+
+### Rules:
+- **SOG threshold: >1 knot** — anything ≤1 is GPS drift, not movement
+- **Moored/anchored vessels:** exclude from ALL ETA calculations
+- **nav_status_label === 'Moored':** do NOT clear `alerted_*` flags, skip in alert loops
+- **is_cargo filter:** only track vessel types 70-89 (cargo vessels)
+- **"In Processing"** at terminal = container discharged, undergoing customs — count as `at_terminal_count`, NOT on vessel
+
+---
+
+## 3. HERE Technologies — Mapping & Routing
+
+### Used for:
+- Truck-legal routing (dispatch routes)
+- Geocoding (address → lat/lng)
+- Map tiles (driver app)
+- Geofencing (terminal boundaries, detention tracking)
+- Route matching
+
+### Geofencing architecture (designed, implementation pending):
+- Geofences stored in `geofences` table keyed by `terminal_code`
+- Looked up at dispatch creation, embedded in dispatch payload
+- Registered locally on device via HERE SDK
+- **Evaluation happens ON-DEVICE** — not server-side
+- 100 trucks each check 2-3 geofences, not all geofences globally
+
+### Terminal geofences designed:
+- **PCT Tacoma:** Bidirectional corridor on Alexander Ave E, gate polygon at booth
+- **T18 Seattle:** Two entry corridors, gate polygon at booth
+
+### Detention timing:
+- Start: ingate photo timestamp
+- Stop: outgate EIR photo timestamp
+- Industry standard — matches how detention is invoiced
+
+---
+
+## 4. Resend — Email
+
+### Used by: `dispatcher-orchestrator.js`
+- Morning briefings, vessel arrival alerts, LFD warnings
+- From address: `contact@myfleetcraft.com`
+
+### Subscriber system:
+- `alert_subscribers` table in Postgres
+- `GET/POST/DELETE /api/subscribers` endpoints in `server.js`
+- DST bug was fixed: `convertToUTC` now uses `Intl.DateTimeFormat` instead of hardcoded `-8` offset
+
+---
+
+## 5. DO Spaces — Photo Storage
+
+| Setting | Value |
+|---------|-------|
+| Bucket | `fleetcraft-media` |
+| Region | `sfo3` |
+| Access | Public HTTPS URLs |
+| Upload endpoint | `POST /api/driver/photos/upload` |
+
+Photos upload from driver app → Fleet API → DO Spaces → URL stored in dispatch columns.
+
+---
+
+## 6. Expo Push Notifications
+
+### Status: Planned, not yet deployed
+- Will use Expo push notification system
+- Trigger: new load assigned → notify driver
+- Requires stable driver app (APK crash must be resolved first)
+
+---
+
+## 7. Anthropic API — Agentic Dispatch
+
+### Status: Fully specced and coded, not yet deployed
+- Model: `claude-sonnet-4-6`
+- File: `dispatch-agent.js`
+- Requires env vars not yet on droplet: `ANTHROPIC_API_KEY`, Twilio credentials, `DISPATCHER_PHONE`
+- Three new DB tables needed: `dispatch_suggestions`, `dispatch_failures`, `agent_run_log`
