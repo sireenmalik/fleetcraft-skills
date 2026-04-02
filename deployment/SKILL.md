@@ -356,3 +356,36 @@ services:
 - Before launching to paying customers
 
 Until then, PM2 + ecosystem.config.js is the process manager. But every new worker ships with a Dockerfile so the migration is incremental, not a cliff.
+
+---
+
+## 11. SQLite Database Files — NEVER Track in Git
+
+> **Lesson learned:** `.db`, `.db-shm`, and `.db-wal` files were tracked in git. Every `git reset --hard origin/main` on the droplet overwrote the live database with the stale committed copy. The `user_status` column added via ALTER TABLE kept disappearing on every deploy because git replaced the file. Caused a full day of debugging during the user_status lane separation build.
+
+### The Rule
+SQLite database files are runtime data, not source code. They must NEVER be tracked in git.
+
+### .gitignore (required in every repo that uses SQLite):
+```
+*.db
+*.db-shm
+*.db-wal
+```
+
+### If you find .db files tracked in a repo:
+1. `git rm --cached *.db *.db-shm *.db-wal`
+2. Add the patterns to `.gitignore`
+3. Commit and push
+4. On the droplet: backup the live .db BEFORE pulling, then restore after `git reset --hard`
+
+### Schema changes to SQLite:
+- Update `container-registry-schema.sql` (the schema definition file) so future DB recreations include the column
+- Run `ALTER TABLE` on the live .db file on the droplet
+- Both steps are required — schema file for reproducibility, ALTER TABLE for the live DB
+
+### WAL maintenance:
+- All SQLite connections must set `PRAGMA wal_autocheckpoint = 1000` on open
+- container-sync.js runs `PRAGMA wal_checkpoint(PASSIVE)` at end of each cycle
+- If WAL grows unbounded: `sqlite3 <db> "PRAGMA wal_checkpoint(TRUNCATE);"`
+- Never use `git reset --hard` to fix WAL issues — that was the old workaround that caused the column loss bug
