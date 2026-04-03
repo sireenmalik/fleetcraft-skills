@@ -331,10 +331,28 @@ These specific mistakes have caused production regressions:
 9. **SQLite .db files tracked in git:** Database files are runtime data. If tracked, `git reset --hard` overwrites the live DB and destroys any columns added via ALTER TABLE. Always add `*.db *.db-shm *.db-wal` to `.gitignore` and use `git rm --cached` to untrack.
 10. **vessels_with_containers dual-writer bug:** Three workers (vessel-sync, ftu-tracker, container-sync) all wrote to this table with different aggregation logic. ftu-tracker zeroed on_vessel_count that container-sync had set. Fix: single owner (vwc-sync.js). If you ever need to write to vessels_with_containers, it MUST go through vwc-sync — no other worker touches this table's data columns.
 11. **Empty string FK values:** Frontend may send "" instead of null for optional FK fields (customer_id, driver_id, truck_id, chassis_id). Postgres treats "" as non-null, fails FK check. Always validate UUID format before INSERT. Use a helper like `uuidOrNull(value)` that returns null for empty strings, "undefined", "null", non-UUID strings, and actual null/undefined. Applied to POST /api/dispatches and any endpoint that accepts optional FK references.
+12. **FTU completed=true is NOT an archive trigger.** FTU sends `completed=true` when it stops tracking — this can happen at vessel arrival, discharge, or any time. It does NOT mean the business cycle is done. The business cycle ends ONLY when the driver completes step 25 (empty return) and `dispatches.completed_at` is set. The webhook handler must NEVER auto-archive on FTU `completed=true`. Auto-archive triggers ONLY from container-sync.js `archiveCompletedDispatches()` which checks `dispatches.completed_at` + 24h.
 
 ---
 
-## 11. Self-Documenting Files — Required Header
+## 11. Container Lifecycle Ownership
+
+FTU owns steps 1-3 ONLY (vessel inbound → arrival → discharged in yard).
+Once the container is in the yard, FTU is irrelevant to business logic.
+
+| Steps | Owner | Trigger |
+|-------|-------|---------|
+| 1-3 | FTU (vessel inbound → arrival → discharge) | FTU webhook |
+| 4-7 | Future Tradlinx (holds → available → LFD) | Not yet integrated |
+| 8 | Web UI (dispatch created) | POST /api/dispatches |
+| 9-25 | Driver app (pickup → delivery → empty return → complete) | POST /api/driver/loads/:id/milestone |
+| Auto-archive | container-sync.js | `dispatches.completed_at` + 24 hours |
+
+**Auto-archive trigger: `dispatches.completed_at` + 24 hours. NOT FTU completed flag.**
+
+---
+
+## 12. Self-Documenting Files — Required Header
 
 > **Goal:** If this file gets deleted, the header comments in neighboring files plus the skill files give AI enough context to rebuild it correctly.
 

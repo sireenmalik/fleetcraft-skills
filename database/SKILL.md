@@ -170,7 +170,16 @@ containers (active) → user_status = 'archived' + archived_at set → container
 
 ### Schema matches containers table plus:
 - `archived_at` — when archived
-- `archive_reason` — why (auto_completed, manual, manual_archive, stale)
+- `archive_reason` — why (dispatch_completed, auto_empty_returned, auto_stale_ofd, manual, manual_archive)
+
+### Archive trigger rules
+- **VALID:** `dispatches.completed_at` older than 24 hours (driver finished full cycle)
+- **VALID:** `ui_status = 'EMPTY_RETURNED'` older than 24 hours (container-sync stale rule)
+- **VALID:** `ui_status = 'OUT_FOR_DELIVERY'` older than 7 days (container-sync stale rule)
+- **VALID:** Manual archive via POST /containers/archive (user decision)
+- **INVALID:** FTU `completed=true` (FTU stops tracking, NOT a business signal)
+- **INVALID:** FTU subscription expiry
+- **INVALID:** Any external API status flag alone
 
 ---
 

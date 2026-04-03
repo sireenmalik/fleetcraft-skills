@@ -42,6 +42,17 @@ headers: {
 ### T49 (Terminal 49): DEACTIVATED
 Never reference `t49-container-tracker.js`, T49 API keys, or T49 endpoints. All T49 code is dead code.
 
+### FTU completed flag — DO NOT USE AS ARCHIVE TRIGGER
+FTU sends `completed=true` when it has no more tracking updates. This can happen:
+- After vessel arrival (container still on vessel)
+- After discharge (container in yard, not yet dispatched)
+- After gate out full (container picked up, mid-delivery)
+- After empty return (actual business completion)
+
+FTU `completed` does NOT reliably indicate business completion. It means "FTU stopped tracking."
+The ONLY valid archive trigger is `dispatches.completed_at` (set by driver app step 25).
+server.js webhook handler lines 684-716 currently auto-archive on `completed=true` — **THIS IS A BUG** and must be removed.
+
 ---
 
 ## 2. AISStream — Vessel Tracking
