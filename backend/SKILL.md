@@ -330,6 +330,7 @@ These specific mistakes have caused production regressions:
 8. **user_status in SET clause:** Sync writers must NEVER include `user_status` in the ON CONFLICT SET clause. Only Fleet API endpoints write this column.
 9. **SQLite .db files tracked in git:** Database files are runtime data. If tracked, `git reset --hard` overwrites the live DB and destroys any columns added via ALTER TABLE. Always add `*.db *.db-shm *.db-wal` to `.gitignore` and use `git rm --cached` to untrack.
 10. **vessels_with_containers dual-writer bug:** Three workers (vessel-sync, ftu-tracker, container-sync) all wrote to this table with different aggregation logic. ftu-tracker zeroed on_vessel_count that container-sync had set. Fix: single owner (vwc-sync.js). If you ever need to write to vessels_with_containers, it MUST go through vwc-sync — no other worker touches this table's data columns.
+11. **Empty string FK values:** Frontend may send "" instead of null for optional FK fields (customer_id, driver_id, truck_id, chassis_id). Postgres treats "" as non-null, fails FK check. Always validate UUID format before INSERT. Use a helper like `uuidOrNull(value)` that returns null for empty strings, "undefined", "null", non-UUID strings, and actual null/undefined. Applied to POST /api/dispatches and any endpoint that accepts optional FK references.
 
 ---
 
