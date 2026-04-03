@@ -195,6 +195,13 @@ Append-only. Never update or delete rows.
 - Every user_status transition writes an event (archive, dismiss, hold, flag, restore)
 - Events are the audit trail — if current state is wrong, rebuild from events
 
+### NEVER bulk delete from container_events
+> **Lesson learned:** A cleanup script deleted all container_events for archived containers,
+> destroying the milestone audit trail (ingate timestamps, GPS coordinates, photos).
+> The dispatches table still had the timestamps but the detailed event history was lost.
+> container_events is append-only — INSERT only, no UPDATE, no DELETE, no bulk cleanup.
+> If the table grows too large, archive old events to a separate table. Never delete.
+
 ---
 
 ## 9. vessels_with_containers Cache Rules
