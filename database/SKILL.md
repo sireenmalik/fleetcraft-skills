@@ -135,7 +135,7 @@ CREATE TABLE container_exclusions (
 ### Rules:
 - Written by Fleet API archive and dismiss endpoints
 - Deleted by Fleet API restore endpoint
-- Read by container-sync.js and ftu-tracker.js at start of each cycle
+- Read by container-sync.js at start of each cycle
 - `held` and `flagged` do NOT create exclusion records (containers stay visible in their tab)
 - On restore, exclusion is deleted → next sync cycle resumes normal updates
 
@@ -199,7 +199,9 @@ Append-only. Never update or delete rows.
 
 ## 9. vessels_with_containers Cache Rules
 
-This cache table is rebuilt by vessel-sync.js.
+This cache table is owned by `vwc-sync.js` (single writer for data columns). `dispatcher-orchestrator.js` writes ONLY the `alerted_*` flag columns.
+
+> **Lesson learned:** Three workers (vessel-sync, ftu-tracker, container-sync) all wrote to this table with different aggregation. ftu-tracker zeroed counts that container-sync set. Fix: single owner (vwc-sync.js).
 
 ### Container count query MUST filter by user_status:
 ```sql
@@ -210,8 +212,7 @@ WHERE vessel_name IS NOT NULL
 GROUP BY vessel_name
 ```
 
-### Zero-count cleanup:
-When a vessel's active container count drops to zero, DELETE its row from `vessels_with_containers`:
+### Zero-count + stale cleanup:
 ```sql
 DELETE FROM vessels_with_containers
 WHERE vessel_name NOT IN (
@@ -219,13 +220,22 @@ WHERE vessel_name NOT IN (
   WHERE vessel_name IS NOT NULL
     AND (user_status IS NULL OR user_status = 'active')
 )
+AND (
+  (alerted_moored = false AND alerted_24h = false AND alerted_2h = false AND alerted_30m = false)
+  OR updated_at < NOW() - INTERVAL '7 days'
+)
 ```
 
+### MMSI resolution (in vwc-sync.js):
+1. `vesselDb.getByName(vesselName)` — match by AIS vessel name
+2. `vesselDb.getByImo(vesselImo)` — fallback match by IMO number
+3. If found, write MMSI to `vessels_with_containers` → ais-collector picks it up for global tracking
+
 ### Reappearance:
-When new active containers arrive on a vessel (via FTU webhook → container-sync), vessel-sync rebuilds the cache and the vessel reappears automatically.
+When new active containers arrive on a vessel (via FTU webhook → container-sync), vwc-sync rebuilds the cache and the vessel reappears automatically.
 
 ### Terminal-agnostic:
-No hardcoded terminal names in any vessel-sync query. Works for 2 terminals or 200.
+No hardcoded terminal names. Works for 2 terminals or 200.
 
 ---
 

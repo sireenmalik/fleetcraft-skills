@@ -47,9 +47,14 @@ Never reference `t49-container-tracker.js`, T49 API keys, or T49 endpoints. All 
 ## 2. AISStream — Vessel Tracking
 
 ### Status: ACTIVE
-- WebSocket connection to AISStream
-- Bounding box covers WA terminals + North Pacific shipping lanes
-- Writes to Postgres `vessels` table
+- WebSocket connection to AISStream via `index.js` (ais-collector-v2)
+- Writes to SQLite `vessel_registry` table (NOT directly to Postgres)
+- `vwc-sync.js` reads SQLite and pushes to Postgres `vessels_cache` and `vessels_with_containers`
+
+### Scan Schedule:
+- **PNW coast** (45-50°N, 135-122°W): continuous 24/7
+- **Pacific sweep** (30-55°N, full Pacific): 30 minutes every 8 hours (UTC 0, 8, 16)
+- Config in `index.js`: `expandScheduleHours` and `expandDurationMinutes`
 
 ### Rules:
 - **SOG threshold: >1 knot** — anything ≤1 is GPS drift, not movement
@@ -129,3 +134,33 @@ Photos upload from driver app → Fleet API → DO Spaces → URL stored in disp
 - File: `dispatch-agent.js`
 - Requires env vars not yet on droplet: `ANTHROPIC_API_KEY`, Twilio credentials, `DISPATCHER_PHONE`
 - Three new DB tables needed: `dispatch_suggestions`, `dispatch_failures`, `agent_run_log`
+
+---
+
+## 8. Vessel Tracking Pipeline
+
+### Architecture: AIS → SQLite → vwc-sync → Postgres
+
+```
+AISStream WebSocket → ais-collector-v2 → SQLite vessel_registry
+                                                ↓
+                                           vwc-sync.js (reads SQLite via vessel-db.js)
+                                                ↓
+                                    Postgres vessels_cache + vessels_with_containers
+```
+
+### vwc-sync.js — Single owner of vessels_with_containers
+- Replaces both `vessel-sync.js` and `ftu-tracker.js` (both KILLED)
+- MMSI resolution: `vesselDb.getByName()` first, then `vesselDb.getByImo()` fallback
+- Container count: queries Postgres containers WHERE `user_status IS NULL OR user_status = 'active'`
+- ETA: AIS-based for WA-bound vessels (SOG > 1), FTU pod_eta fallback for others
+- Terminal geofence: moored vessels matched against terminal polygons → updates container terminal_name in SQLite
+- Stale cleanup: vessels with zero active containers + no alert flags + updated > 7 days → deleted from cache
+- **Never writes `alerted_*` columns** — dispatcher owns those
+
+### MMSI Chicken-and-Egg Problem
+FTU provides vessel IMO but not MMSI. AIS provides MMSI but only if the vessel is in the scan area. Resolution:
+1. FTU webhook provides vessel_name + vessel_imo → stored in containers table
+2. AIS Pacific sweep sees the vessel → stores MMSI + IMO in SQLite vessel_registry
+3. vwc-sync reads vessel_registry by name/IMO → writes MMSI to vessels_with_containers
+4. ais-collector reads vessels_with_containers MMSIs → tracks vessel globally (not just in bounding box)

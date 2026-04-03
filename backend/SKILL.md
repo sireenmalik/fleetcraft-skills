@@ -2,8 +2,8 @@
 name: fleetcraft-backend
 description: >
   FleetCraft backend development rules. Use this skill whenever working on
-  server.js (Fleet API), container-sync.js, ftu-tracker.js, archive-worker.js,
-  dispatcher-orchestrator.js, vessel-sync.js, dispatch-agent.js, or any PM2
+  server.js (Fleet API), container-sync.js, vwc-sync.js,
+  dispatcher-orchestrator.js, dispatch-agent.js, or any PM2
   worker on the DigitalOcean droplet. Also use when writing SQL migrations,
   modifying database tables, or changing any data write path. This skill
   prevents the recurring bugs that have caused production regressions: sync
@@ -34,12 +34,16 @@ Every data domain has exactly ONE writer. No exceptions.
 |--------|--------------|------|-----------|
 | Container tracking data | FTU webhook handler | `server.js` | SQLite → Postgres via container-sync |
 | Container user intent | Fleet API endpoints | `server.js` | Postgres containers.user_status (ONLY writer) |
-| Container archive | archive-worker + manual archive endpoint | `archive-worker.js`, `server.js` | SQLite (archived_at + user_status) → Postgres via container-sync |
-| Container exclusions | Fleet API endpoints | `server.js` | Postgres container_exclusions (tombstone table) |
-| Vessel AIS positions | AIS collector | `index.js` (ais-collector-v2) | Postgres vessels table |
-| Vessel cache | vessel-sync | `vessel-sync.js` | Postgres vessels_with_containers (must filter by user_status) |
+| Container archive (auto) | container-sync.js | `container-sync.js` | SQLite (archived_at + user_status) + Postgres container_exclusions |
+| Container archive (manual) | Fleet API | `server.js` | Postgres containers + container_exclusions + SQLite delete |
+| Container exclusions | Fleet API + container-sync | `server.js`, `container-sync.js` | Postgres container_exclusions (tombstone table) |
+| SQLite vessel registry | AIS collector | `index.js` (ais-collector-v2) | SQLite vessel_registry |
+| Vessel cache (vessels_with_containers) | vwc-sync | `vwc-sync.js` | Postgres vessels_with_containers (ALL data columns) |
+| Vessel cache (vessels_cache) | vwc-sync | `vwc-sync.js` | Postgres vessels_cache |
+| Alert flags (alerted_*) | Dispatcher | `dispatcher-orchestrator.js` | Postgres vessels_with_containers (alerted_* columns ONLY) |
 | Dispatch records | Fleet API | `server.js` | Postgres dispatches table |
 | Driver milestones | Fleet API (from driver app) | `server.js` | Postgres container_events table |
+| Auto-archive events | container-sync | `container-sync.js` | Postgres container_events |
 | Driver positions | Fleet API (from driver app) | `server.js` | Postgres driver_positions table |
 | Alert logs | Dispatcher | `dispatcher-orchestrator.js` | Postgres alert_logs table |
 
@@ -126,16 +130,21 @@ User clicks Archive → POST /containers/archive
   6. INSERT INTO container_events (event_type = 'archive', source = 'dispatcher')
 ```
 
-### Correct Archive Sequence (Auto)
+### Correct Archive Sequence (Auto — handled by container-sync.js)
 
 ```
-archive-worker.js runs every 2 minutes:
+container-sync.js runs two auto-archive functions every 2 minutes:
+
+archiveCompletedDispatches():
   1. Queries Postgres for completed dispatches older than 24h
-  2. Sets archived_at AND user_status = 'archived' in SQLite for matching containers
+  2. Sets archived_at + user_status = 'archived' in SQLite
   3. INSERT INTO container_exclusions in Postgres
-  4. container-sync.js picks up archived_at IS NOT NULL
-  5. Moves to archived_containers in Postgres
-  6. Calls FTU unregister (only for auto-archive, NOT manual — manual already did it)
+  4. syncArchivedContainers() moves to archived_containers on next cycle
+
+archiveStaleContainers():
+  1. Queries Postgres for stale containers (EMPTY_RETURNED >24h, OUT_FOR_DELIVERY >7d)
+  2. Same flow: SQLite archived_at + user_status + Postgres tombstone
+  3. archive_reason: 'auto_empty_returned' or 'auto_stale_ofd'
 ```
 
 ### Other user_status Transitions
@@ -165,9 +174,9 @@ Restore → POST /containers/restore
 ```
 
 ### Rules
-- `archive-worker.js` sets `archived_at` AND `user_status` in SQLite, creates exclusion record
-- `container-sync.js` handles Postgres sync AND moves to `archived_containers`
-- `ftu-tracker.js` does cache refresh ONLY — no archive logic
+- `container-sync.js` handles ALL auto-archiving (stale + dispatch-completed) AND moves to `archived_containers`
+- `archive-worker.js` is KILLED — its logic is merged into container-sync.js
+- `ftu-tracker.js` is KILLED — cache refresh replaced by vwc-sync.js
 - Manual archive in `server.js` handles FTU unregister inline — `syncArchivedContainers()` skips `manual`/`manual_archive` reasons to avoid duplicate API calls
 - The `archived_containers` table is a permanent record — never delete from it
 
@@ -178,8 +187,9 @@ Restore → POST /containers/restore
 > **Lesson learned:** FTU is an event-based webhook API, not a polling API. The old ftu-tracker.js was calling Terminal 49 endpoints that don't exist on FTU. T49 is fully deactivated.
 
 ### Active System
-- **FTU (FindTEU)** via `ftu-tracker.js` — cache refresh only
-- Webhook pushes from FTU arrive at Fleet API → SQLite → Postgres
+- **FTU (FindTEU)** — webhook-based container tracking
+- `ftu-tracker.js` is KILLED — its cache refresh logic is now in `vwc-sync.js`
+- Webhooks arrive at Fleet API → SQLite → Postgres via container-sync
 - FTU account #14978
 
 ### Deactivated System
@@ -222,14 +232,19 @@ FTU does NOT provide: LFD, holds detail (customs/freight/terminal), yard locatio
 
 | ID | Name | Script | Status | Purpose |
 |----|------|--------|--------|---------|
-| 0 | dispatcher | dispatcher-orchestrator.js | online | Email/alert dispatching |
-| 1 | vessel-sync | vessel-sync.js | online | Postgres vessel cache refresh (filters by user_status) |
-| 2 | ais-collector-v2 | index.js | online | AIS vessel position collection |
-| 3 | ftu-tracker | ftu-tracker.js | online | FTU container cache refresh (checks tombstone before upsert) |
-| 4 | container-sync | container-sync.js | online | SQLite → Postgres container sync (tombstone check + upsert guard) |
-| 5 | dispatch-worker | dispatch-worker.js | STOPPED | Postgres pool migration needed |
+| 0 | dispatcher | dispatcher-orchestrator.js | online | Email/alert dispatching (Resend) |
+| 2 | ais-collector-v2 | index.js | online | AIS WebSocket → SQLite vessel_registry |
+| 4 | container-sync | container-sync.js | online | SQLite → PG containers + auto-archive (stale + dispatch) |
+| — | vwc-sync | vwc-sync.js | online | Single owner of vessels_with_containers + vessels_cache |
 | 7 | fleet-api | server.js | online | Express API (port 3001) |
-| 8 | archive-worker | archive-worker.js | online | Auto-archive completed containers (writes user_status + exclusion) |
+| 5 | dispatch-worker | here-dispatch-worker.js | STOPPED | Future HERE routing |
+
+### Killed Workers (do NOT restart)
+| ID | Name | Reason killed | Replaced by |
+|----|------|--------------|-------------|
+| 1 | vessel-sync | Dual-writer on vessels_with_containers | vwc-sync.js |
+| 3 | ftu-tracker | Dual-writer on vessels_with_containers, cache refresh redundant | vwc-sync.js |
+| 8 | archive-worker | Logic merged into container-sync.js | container-sync.js |
 
 ### Adding a New Worker
 1. Create the .js file in `/opt/fleetcraft-ais/` or `/opt/fleetcraft-api/`
@@ -276,27 +291,24 @@ Fleet API runs on port 3001, served via nginx at `api.myfleetcraft.com`.
 
 ---
 
-## 9. Vessel Tracking & Cache Rules
+## 9. Vessel Tracking & vwc-sync Rules
 
-> **Lesson learned:** SOG of 0.1 knots (GPS drift) divided into distance produced a 212-hour ETA for a moored vessel.
+> **Lesson learned:** SOG of 0.1 knots (GPS drift) divided into distance produced a 212-hour ETA for a moored vessel. Also: three workers (vessel-sync, ftu-tracker, container-sync) all wrote to vessels_with_containers with different aggregation logic, causing count zeroing and MMSI loss.
 
 ### AIS Rules
 - SOG threshold: **>1 knot** to count as moving. SOG ≤1 = stationary/GPS drift.
-- Moored/anchored vessels: **exclude from ETA calculations** in both ftu-tracker and dispatcher
+- Moored/anchored vessels: **exclude from ETA calculations** in vwc-sync and dispatcher
 - `nav_status_label === 'Moored'` → skip in 24H alert loop, do not clear alerted flags
 - "In Processing" at terminal = container discharged, undergoing customs/terminal handling — definitively NOT on vessel. Count in `at_terminal_count`.
 
-### vessel-sync.js Rules
-- When counting containers per vessel, filter by `user_status`:
-  ```sql
-  SELECT vessel_name, COUNT(*) FROM containers
-  WHERE vessel_name IS NOT NULL
-    AND (user_status IS NULL OR user_status = 'active')
-  GROUP BY vessel_name
-  ```
-- When a vessel's active container count drops to **zero**, DELETE its row from `vessels_with_containers`. The vessel still exists in the `vessels` table (AIS keeps tracking), but it disappears from the dashboard.
-- When new active containers arrive on that vessel, it reappears in `vessels_with_containers` automatically on the next sync cycle.
-- **Terminal-agnostic**: No hardcoded terminal names in any vessel-sync query. The system works identically for 2 terminals or 200.
+### vwc-sync.js — Single Owner of vessels_with_containers
+- **MMSI resolution order:** `vesselDb.getByName()` first, `vesselDb.getByImo()` fallback
+- **Container count aggregation:** Queries Postgres containers filtered by `user_status IS NULL OR user_status = 'active'`
+- **ETA logic:** AIS ETA for WA-bound vessels (SOG > 1), FTU pod_eta for others
+- **Terminal geofence mapping:** Moored vessel inside terminal polygon → update container terminal_name in SQLite
+- **Stale cleanup:** Zero active containers AND (no alert flags OR updated > 7 days ago) → delete from cache
+- **Never writes `alerted_*` columns** — dispatcher owns those
+- **Terminal-agnostic**: No hardcoded terminal names. Works for 2 terminals or 200.
 
 ### Container status values
 - `ui_status` values are FTU-mapped: `IN_TRANSIT`, `AT_PORT`, `OUT_FOR_DELIVERY`, `EMPTY_RETURNED`
@@ -317,6 +329,7 @@ These specific mistakes have caused production regressions:
 7. **Missing tombstone check:** Every sync writer must load `container_exclusions` at the start of each cycle and skip excluded containers BEFORE attempting upsert.
 8. **user_status in SET clause:** Sync writers must NEVER include `user_status` in the ON CONFLICT SET clause. Only Fleet API endpoints write this column.
 9. **SQLite .db files tracked in git:** Database files are runtime data. If tracked, `git reset --hard` overwrites the live DB and destroys any columns added via ALTER TABLE. Always add `*.db *.db-shm *.db-wal` to `.gitignore` and use `git rm --cached` to untrack.
+10. **vessels_with_containers dual-writer bug:** Three workers (vessel-sync, ftu-tracker, container-sync) all wrote to this table with different aggregation logic. ftu-tracker zeroed on_vessel_count that container-sync had set. Fix: single owner (vwc-sync.js). If you ever need to write to vessels_with_containers, it MUST go through vwc-sync — no other worker touches this table's data columns.
 
 ---
 
@@ -343,17 +356,17 @@ Every .js worker file MUST have this header block:
 ### Example:
 ```javascript
 /**
- * container-sync.js — CQRS Query Side Sync: SQLite → Postgres
+ * container-sync.js — CQRS Query Side Sync: SQLite → Postgres + Auto-Archive
  *
- * READS FROM: SQLite container-registry.db (containers table), Postgres container_exclusions
- * WRITES TO:  Postgres fleetcraft_db (containers, archived_containers, vessels_with_containers)
- * CALLED BY:  PM2 (every 30 seconds)
- * DEPENDS ON: ftu-tracker.js populating SQLite, archive-worker.js setting archived_at
- * DEPENDED ON BY: Fleet API reads Postgres, frontend reads via API, vessel-sync reads containers
+ * READS FROM: SQLite container-registry.db (containers table), Postgres container_exclusions, dispatches
+ * WRITES TO:  Postgres fleetcraft_db (containers, archived_containers, container_exclusions, container_events)
+ * CALLED BY:  PM2 (sync every 30s, archive every 2min)
+ * DEPENDS ON: Fleet API webhook handler populating SQLite
+ * DEPENDED ON BY: Fleet API reads Postgres, frontend reads via API, vwc-sync reads containers
  *
- * Single writer for container data in Postgres. Loads tombstone set from container_exclusions
- * at start of each cycle — skips excluded containers. Upsert includes WHERE guard on user_status.
- * Must never overwrite user_status. Must include findteu_shipment_id in column list.
+ * Single writer for container data in Postgres. Also handles auto-archiving (stale + dispatch-completed).
+ * Loads tombstone set from container_exclusions at start of each cycle — skips excluded containers.
+ * Upsert includes WHERE guard on user_status. Must never overwrite user_status.
  */
 ```
 

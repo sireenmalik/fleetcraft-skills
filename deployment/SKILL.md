@@ -206,11 +206,10 @@ module.exports = {
   apps: [
     { name: 'fleet-api', script: 'server.js', cwd: '/opt/fleetcraft-api' },
     { name: 'ais-collector-v2', script: 'index.js', cwd: '/opt/fleetcraft-ais' },
-    { name: 'ftu-tracker', script: 'ftu-tracker.js', cwd: '/opt/fleetcraft-ais' },
     { name: 'container-sync', script: 'container-sync.js', cwd: '/opt/fleetcraft-ais' },
-    { name: 'vessel-sync', script: 'vessel-sync.js', cwd: '/opt/fleetcraft-ais' },
-    { name: 'dispatcher', script: 'dispatcher-orchestrator.js', cwd: '/opt/fleetcraft-alerts' },
-    { name: 'archive-worker', script: 'archive-worker.js', cwd: '/opt/fleetcraft-ais' },
+    { name: 'vwc-sync', script: 'vwc-sync.js', cwd: '/opt/fleetcraft-ais' },
+    { name: 'dispatcher', script: 'dispatcher-orchestrator.js', cwd: '/opt/fleetcraft-alerts/Dispatchers-Live' },
+    // KILLED: vessel-sync (replaced by vwc-sync), ftu-tracker (replaced by vwc-sync), archive-worker (merged into container-sync)
   ]
 };
 ```
