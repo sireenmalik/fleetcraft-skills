@@ -305,6 +305,11 @@ Writer:      _______________
 - [ ] 11. This registry: contract table updated with new column
 - [ ] 12. validate-schema.sh: added to critical column checks if applicable
 - [ ] 13. Run validate-schema.sh on droplet — all checks pass
+- [ ] 14. If dispatch column: ALL dispatch read endpoints return it
+         (GET /dispatches, GET /api/dispatches/:id, GET /api/driver/loads,
+          GET /api/driver/loads/:id, GET /api/driver/history)
+- [ ] 15. Frontend fetchDispatchLookup maps the field
+- [ ] 16. Frontend DispatchInfo interface includes the field
 ```
 
 ---
@@ -324,7 +329,45 @@ The dispatches table is Postgres-only (no SQLite, no sync). Written by fleet-api
 
 ### Dispatch geofence chain:
 ```
-container.terminal_code -> geofences lookup -> dispatch.pickup_geofences
+Step 1: container.terminal_code (written by vwc-sync geofence match)
+Step 2: container-sync pushes terminal_code to Postgres (COALESCE)
+Step 3: Dispatch creation: geofences lookup WHERE UPPER(terminal_code) = UPPER($1)
+Step 4: dispatch.pickup_geofences embedded (JSONB array of geofence objects)
+Step 5: Driver app detects corridor crossing → queue_start_at fires
+Step 6: GET /dispatches returns geofence columns (READ PATH)
+        ALL dispatch SELECT queries must include: queue_start_at, queue_stop_at,
+        queue_minutes, terminal_ingate_at, road_wait_minutes, terminal_wait_minutes,
+        pickup_geofences, terminal_code.
+        Missing any of these from the SELECT = geofence card shows blank.
+Step 7: Frontend renders geofence card
+        fetchDispatchLookup maps the fields → DispatchInfo interface →
+        ContainerDetailsModal renders Geofence & Detention section.
 ```
 If `terminal_code` is missing from the container, the dispatch has no geofence
 and the driver app can't detect terminal arrival.
+
+---
+
+## Contract 7: Dispatch Geofence & Detention Columns
+
+These columns track detention time at terminals. Written by the milestone handler, read by the frontend geofence card.
+
+| Field | Type | Written by | Read by | API endpoints that MUST return it |
+|-------|------|-----------|---------|----------------------------------|
+| queue_start_at | timestamptz | milestone handler (terminal_area_arrived) | frontend geofence card | GET /dispatches, GET /api/driver/loads, GET /api/driver/history |
+| queue_stop_at | timestamptz | milestone handler (terminal_outgate) | frontend geofence card | same |
+| queue_minutes | integer | milestone handler (computed from start/stop) | frontend geofence card | same |
+| terminal_ingate_at | timestamptz | milestone handler (at_terminal) | frontend geofence card | same |
+| road_wait_minutes | integer | milestone handler (computed: ingate - start) | frontend geofence card | same |
+| terminal_wait_minutes | integer | milestone handler (computed: stop - ingate) | frontend geofence card | same |
+| pickup_geofences | jsonb | dispatch creation (embedded from geofences table) | frontend geofence card + driver app | same |
+| terminal_code | text | dispatch creation (from container.terminal_code) | frontend geofence card | same |
+
+### CRITICAL: read path vs write path
+These columns were written correctly by the milestone handler but NOT returned by `GET /dispatches` for the entire development cycle. The geofence detention card showed blank until the SELECT was updated. Every new dispatch column must be added to ALL read endpoints, not just the write path.
+
+### Frontend mapping
+The `fetchDispatchLookup()` function manually maps API response fields into `DispatchInfo` objects. New fields must be added to:
+1. `DispatchInfo` interface (ContainerTracking.tsx)
+2. The mapper in `fetchDispatchLookup()` (ContainerTracking.tsx)
+3. The geofence card JSX in `ContainerDetailsModal` (ContainerTracking.tsx)
