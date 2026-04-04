@@ -36,6 +36,17 @@ This is a known session-level OAuth token issue. Fall back to Claude Code for al
 
 All backend code lives on the droplet at `178.128.64.97`.
 
+### Pre-deploy validation (REQUIRED):
+
+Before every deploy, run the cross-layer schema validator:
+
+```bash
+ssh root@178.128.64.97 'bash /opt/fleetcraft-ais/scripts/validate-schema.sh'
+```
+
+If any check fails, **DO NOT deploy**. Fix the contract violation first.
+See `fleetcraft-skills/column-registry/SKILL.md` for the full data contract registry.
+
 ### Standard deploy (fleetcraft-ais or fleetcraft-api repo):
 
 ```bash
@@ -43,6 +54,7 @@ ssh root@178.128.64.97
 cd /opt/fleetcraft-ais    # or /opt/fleetcraft-api
 git fetch origin
 git reset --hard origin/main
+bash /opt/fleetcraft-ais/scripts/validate-schema.sh   # must pass
 pm2 restart <process-name>
 ```
 
