@@ -324,3 +324,41 @@ CREATE INDEX IF NOT EXISTS idx_name ON table (org_id, new_column);
 - Apply with: `psql -h localhost -U fleetcraft -d fleetcraft_db -f migrations/NNN_file.sql`
 - If you need to undo something, write a NEW migration that reverses it
 - The migrations folder is the canonical record of the schema — if someone asks "what's the schema?", point them here
+
+---
+
+## 14. Cross-Layer Impact Checklist
+
+Before adding, renaming, or removing ANY data field, trace it through all 5 layers.
+If a layer is affected, the change must be made there too. Missing one layer causes silent data loss.
+
+> **Lesson learned:** `terminal_code` was added to SQLite and vwc-sync but missing from container-sync's column list. Data stayed in SQLite forever — dispatch creation couldn't find it in Postgres, geofences never embedded.
+
+### Example: adding terminal_code to containers
+
+| Layer | Component | Check | Action needed |
+|-------|-----------|-------|---------------|
+| 1 | External API (FTU/AIS) | Does the API provide this field? | No — we derive it from AIS polygon match |
+| 2a | Ingestion (fleet-api webhook) | Does the webhook handler write it? | Check server.js FTU handler |
+| 2b | Ingestion (vwc-sync) | Does vwc-sync write it? | YES — add to terminal mapping UPDATE |
+| 2c | Sync (container-sync) | Is it in the SQLite SELECT + Postgres INSERT column list? | YES — add to both |
+| 2d | SQLite schema | Does the column exist? | YES — ALTER TABLE ADD COLUMN |
+| 3 | Postgres schema | Does the column exist? | Check — may already exist |
+| 4a | Intelligence (dispatcher) | Does it read this field? | No |
+| 4b | Intelligence (fleet-api user actions) | Does dispatch creation use it? | YES — geofence lookup uses terminal_code |
+| 5 | UX (dashboard/driver app) | Does the UI display it? | Check frontend component |
+
+### Checklist (copy for every field change):
+- [ ] SQLite column exists (ALTER TABLE if needed)
+- [ ] Postgres column exists (migration if needed)
+- [ ] container-sync.js includes it in SELECT + INSERT + UPDATE
+- [ ] vwc-sync.js writes it (if vessel/terminal related)
+- [ ] fleet-api webhook handler writes it (if FTU provides it)
+- [ ] fleet-api read endpoints return it (if UX needs it)
+- [ ] Frontend component displays it (if user-facing)
+- [ ] archived_containers includes it (if needed for snapshot)
+- [ ] container-registry-schema.sql updated (if SQLite column added)
+
+### Common miss
+Adding a column to SQLite + Postgres but forgetting container-sync.
+Container-sync is the bridge — if it doesn't know about the column, the data stays in SQLite forever.
