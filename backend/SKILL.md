@@ -310,6 +310,17 @@ Fleet API runs on port 3001, served via nginx at `api.myfleetcraft.com`.
 - **Never writes `alerted_*` columns** — dispatcher owns those
 - **Terminal-agnostic**: No hardcoded terminal names. Works for 2 terminals or 200.
 
+### AIS Handover — vwc-sync status override
+
+When vwc-sync detects a vessel moored inside a terminal geofence, it checks all containers on that vessel:
+- If container `ui_status = 'IN_TRANSIT'` AND vessel is moored at terminal:
+  → Override `ui_status` to `'AT_PORT'` in Postgres directly (not SQLite)
+  → Set `terminal_name` and `terminal_code` from geofence match
+  → Set ETA = 0
+  → Log: "AIS handover: {container} on {vessel} → AT_PORT at {terminal}"
+  → This is the ONLY case where vwc-sync writes to Postgres containers table
+  → The timestamp guard in container-sync ensures SQLite won't overwrite this
+
 ### Container status values
 - `ui_status` values are FTU-mapped: `IN_TRANSIT`, `AT_PORT`, `OUT_FOR_DELIVERY`, `EMPTY_RETURNED`
 - Dispatch-ready containers: `ui_status = 'AT_PORT'` AND `user_status = 'active'` — both conditions required
@@ -333,6 +344,7 @@ These specific mistakes have caused production regressions:
 11. **Empty string FK values:** Frontend may send "" instead of null for optional FK fields (customer_id, driver_id, truck_id, chassis_id). Postgres treats "" as non-null, fails FK check. Always validate UUID format before INSERT. Use a helper like `uuidOrNull(value)` that returns null for empty strings, "undefined", "null", non-UUID strings, and actual null/undefined. Applied to POST /api/dispatches and any endpoint that accepts optional FK references.
 12. **FTU completed=true is NOT an archive trigger.** FTU sends `completed=true` when it stops tracking — this can happen at vessel arrival, discharge, or any time. It does NOT mean the business cycle is done. The business cycle ends ONLY when the driver completes step 25 (empty return) and `dispatches.completed_at` is set. The webhook handler must NEVER auto-archive on FTU `completed=true`. Auto-archive triggers ONLY from container-sync.js `archiveCompletedDispatches()` which checks `dispatches.completed_at` + 24h.
 13. **Cross-layer column gap.** Adding a column to one layer (e.g., SQLite) without adding it to container-sync's column list means the data never reaches Postgres. Always trace new fields through the Cross-Layer Impact Checklist in database/SKILL.md. The `terminal_code` field was added to SQLite and vwc-sync but missing from container-sync — data stayed in SQLite, dispatch creation couldn't find it, geofences never embedded.
+14. **AIS-FTU handover lag.** Vessel moored at terminal but FTU still reports IN_TRANSIT. This is normal — shipping lines are slow to report discharge. vwc-sync overrides ui_status to AT_PORT based on AIS moored position + terminal geofence match. FTU discharge data arrives later and enriches the record (pod_discharged_at, holds, etc.) without overriding the AT_PORT status.
 
 ---
 

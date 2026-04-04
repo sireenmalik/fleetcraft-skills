@@ -175,3 +175,45 @@ FTU provides vessel IMO but not MMSI. AIS provides MMSI but only if the vessel i
 2. AIS Pacific sweep sees the vessel → stores MMSI + IMO in SQLite vessel_registry
 3. vwc-sync reads vessel_registry by name/IMO → writes MMSI to vessels_with_containers
 4. ais-collector reads vessels_with_containers MMSIs → tracks vessel globally (not just in bounding box)
+
+### AIS-to-FTU Handover Protocol
+
+AIS and FTU own different phases of the container lifecycle. The handover point is when the vessel moors at a terminal.
+
+**AIS owns:** Vessel position tracking — ocean transit → approach → moored at terminal.
+AIS job is DONE when: nav_status = Moored AND vessel is inside a terminal geofence polygon.
+
+**FTU owns:** Container status — discharge → holds → available → gate out → empty return.
+FTU job STARTS when: vessel moored OR FTU sends discharge webhook, whichever comes first.
+
+**Handover rules:**
+
+1. When AIS confirms vessel moored at terminal:
+   - Container ui_status overrides to AT_PORT (even if FTU still says IN_TRANSIT)
+   - terminal_name and terminal_code set from geofence match
+   - ETA = 0 (vessel is already here)
+   - Log: "AIS handover: {vessel} moored at {terminal}, {container} → AT_PORT"
+
+2. When FTU sends discharge before vessel moored (FTU is faster):
+   - Trust FTU — container is AT_PORT
+   - AIS catches up later when vessel moors
+
+3. When FTU is silent 48h+ after vessel moored:
+   - Container stays AT_PORT (from AIS override)
+   - Log warning: "FTU lag: {vessel} moored at {terminal} but no discharge data after 48h"
+   - Dispatcher sees the container at terminal and can act on it
+
+4. When AIS and FTU disagree on terminal:
+   - FTU terminal wins for the container (FTU knows the specific berth/facility)
+   - AIS terminal is used only when FTU has no terminal data
+   - Log: "Terminal conflict: AIS={ais_terminal}, FTU={ftu_terminal} — using FTU"
+
+**Failure boundaries:**
+
+| AIS | FTU | Result |
+|-----|-----|--------|
+| Moored at terminal | Discharged | Both agree. AT_PORT. Normal. |
+| Moored at terminal | Still IN_TRANSIT | Override to AT_PORT. Log warning. Wait for FTU discharge. |
+| No position | Discharged | Trust FTU. AT_PORT. |
+| No position | No data | Stay at last known status. |
+| Moored at terminal A | Discharged at terminal B | FTU terminal wins. Flag for review. |
