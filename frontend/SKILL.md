@@ -136,3 +136,50 @@ Each tab shows a count badge. Fetch counts on page load with `?status=all` or se
 
 ### Error handling:
 On any action error, show toast with the server's error message. Do NOT remove the row from the list — let the user retry.
+
+---
+
+## 6. Numeric Display Safety
+
+Never call `.toFixed()` directly on API values. Postgres numeric types come as strings via JSON.
+
+```typescript
+// WRONG — crashes with "toFixed is not a function"
+value.toFixed(2)
+
+// RIGHT — coerce to number first
+Number(value || 0).toFixed(2)
+
+// Or with null guard
+value ? Number(value).toFixed(2) : '—'
+```
+
+This applies to `daily_rate`, `demurrage_amount`, and any numeric column.
+
+---
+
+## 7. API Field Coverage
+
+When adding a new data card or section to the UI, verify the API endpoint returns the fields you need.
+
+Check: `curl` the endpoint, parse the JSON, confirm your fields exist in the response.
+If missing: update the server.js SELECT query for that endpoint.
+
+The geofence detention card was built but showed blank because `GET /dispatches` didn't include `queue_start_at`, `queue_stop_at`, `pickup_geofences` in its SELECT.
+
+Also check the frontend mapper — if `fetchDispatchLookup()` or similar functions manually map fields from the API response into a typed object, new fields must be added to the mapper too.
+
+---
+
+## 8. Supabase Is Dead
+
+No Supabase imports, no Supabase client, no Supabase queries. All data comes from fleet-api.
+
+If a component imports from `supabase/client` or uses `supabase.from()`, it **will** read from a different database than what fleet-api writes to — causing FK violations, stale data, and ghost records.
+
+All data fetches use:
+```typescript
+const response = await fetch(`${API_BASE}/api/endpoint`);
+```
+
+If you find a Supabase import in any component, replace it with a fleet-api fetch call immediately.

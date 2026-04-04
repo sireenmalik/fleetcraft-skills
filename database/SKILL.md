@@ -355,6 +355,8 @@ If a layer is affected, the change must be made there too. Missing one layer cau
 - [ ] vwc-sync.js writes it (if vessel/terminal related)
 - [ ] fleet-api webhook handler writes it (if FTU provides it)
 - [ ] fleet-api read endpoints return it (if UX needs it)
+- [ ] fleet-api read endpoint SELECT includes the column (not just the write endpoint)
+- [ ] Frontend fetch mapper includes the field (fetchDispatchLookup, etc.)
 - [ ] Frontend component displays it (if user-facing)
 - [ ] archived_containers includes it (if needed for snapshot)
 - [ ] container-registry-schema.sql updated (if SQLite column added)
@@ -362,3 +364,10 @@ If a layer is affected, the change must be made there too. Missing one layer cau
 ### Common miss
 Adding a column to SQLite + Postgres but forgetting container-sync.
 Container-sync is the bridge — if it doesn't know about the column, the data stays in SQLite forever.
+
+### Read path vs write path
+Adding a column and writing to it is only half the job. If the API's SELECT query doesn't include the new column, the frontend never sees it. Always check BOTH:
+1. **Write path:** Does the INSERT/UPDATE include the column? (milestone handler, archive, etc.)
+2. **Read path:** Does the SELECT in every GET endpoint include the column?
+
+The geofence columns were written correctly by the milestone handler but not returned by `GET /dispatches` — the detention card showed blank until the SELECT was updated. Also check the frontend mapper — `fetchDispatchLookup()` manually maps fields and silently drops any it doesn't list.
