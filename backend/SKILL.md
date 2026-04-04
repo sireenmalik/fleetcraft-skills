@@ -304,22 +304,34 @@ Fleet API runs on port 3001, served via nginx at `api.myfleetcraft.com`.
 ### vwc-sync.js — Single Owner of vessels_with_containers
 - **MMSI resolution order:** `vesselDb.getByName()` first, `vesselDb.getByImo()` fallback
 - **Container count aggregation:** Queries Postgres containers filtered by `user_status IS NULL OR user_status = 'active'`
-- **ETA logic:** AIS ETA for WA-bound vessels (SOG > 1), FTU pod_eta for others
 - **Terminal geofence mapping:** Moored vessel inside terminal polygon → update container terminal_name in SQLite
 - **Stale cleanup:** Zero active containers AND (no alert flags OR updated > 7 days ago) → delete from cache
 - **Never writes `alerted_*` columns** — dispatcher owns those
 - **Terminal-agnostic**: No hardcoded terminal names. Works for 2 terminals or 200.
 
+### ETA calculation (FTU-first priority)
+
+> **Lesson learned:** EVER SIGMA had AIS destination `CAVAN>JPTYO` (Vancouver → Japan). AIS ETA calculated distance to Japan — 87 hours shown in dashboard. Team said ETA was April 15 (Tacoma). FTU pod_eta had the correct answer. AIS destination is the vessel's plan, not the container's plan.
+
+```
+IF vessel moored at terminal:
+  eta_hours = 0, eta_source = 'MOORED'
+ELSE IF FTU pod_eta exists for this vessel's containers:
+  eta_hours = (pod_eta - now) in hours, eta_source = 'FTU'
+ELSE IF isHeadingToWA(destination) AND SOG > 1:
+  eta_hours = distance_nm / SOG, eta_source = 'AIS'
+ELSE:
+  eta_hours = null, eta_source = null
+```
+
 ### AIS Handover — vwc-sync status override
 
-When vwc-sync detects a vessel moored inside a terminal geofence, it checks all containers on that vessel:
-- If container `ui_status = 'IN_TRANSIT'` AND vessel is moored at terminal:
-  → Override `ui_status` to `'AT_PORT'` in Postgres directly (not SQLite)
-  → Set `terminal_name` and `terminal_code` from geofence match
-  → Set ETA = 0
-  → Log: "AIS handover: {container} on {vessel} → AT_PORT at {terminal}"
-  → This is the ONLY case where vwc-sync writes to Postgres containers table
-  → The timestamp guard in container-sync ensures SQLite won't overwrite this
+When vwc-sync detects a vessel moored inside a terminal geofence, it checks all IN_TRANSIT containers on that vessel:
+- Override `ui_status` to `'AT_PORT'` in Postgres directly (not SQLite)
+- Set `terminal_name` and `terminal_code` from geofence match
+- This is the ONLY case where vwc-sync writes to Postgres containers table
+- The timestamp guard in container-sync ensures SQLite won't overwrite this
+- Log: "AIS handover: {container} on {vessel} → AT_PORT at {terminal}"
 
 ### Container status values
 - `ui_status` values are FTU-mapped: `IN_TRANSIT`, `AT_PORT`, `OUT_FOR_DELIVERY`, `EMPTY_RETURNED`
@@ -344,7 +356,8 @@ These specific mistakes have caused production regressions:
 11. **Empty string FK values:** Frontend may send "" instead of null for optional FK fields (customer_id, driver_id, truck_id, chassis_id). Postgres treats "" as non-null, fails FK check. Always validate UUID format before INSERT. Use a helper like `uuidOrNull(value)` that returns null for empty strings, "undefined", "null", non-UUID strings, and actual null/undefined. Applied to POST /api/dispatches and any endpoint that accepts optional FK references.
 12. **FTU completed=true is NOT an archive trigger.** FTU sends `completed=true` when it stops tracking — this can happen at vessel arrival, discharge, or any time. It does NOT mean the business cycle is done. The business cycle ends ONLY when the driver completes step 25 (empty return) and `dispatches.completed_at` is set. The webhook handler must NEVER auto-archive on FTU `completed=true`. Auto-archive triggers ONLY from container-sync.js `archiveCompletedDispatches()` which checks `dispatches.completed_at` + 24h.
 13. **Cross-layer column gap.** Adding a column to one layer (e.g., SQLite) without adding it to container-sync's column list means the data never reaches Postgres. Always trace new fields through the Cross-Layer Impact Checklist in database/SKILL.md. The `terminal_code` field was added to SQLite and vwc-sync but missing from container-sync — data stayed in SQLite, dispatch creation couldn't find it, geofences never embedded.
-14. **AIS-FTU handover lag.** Vessel moored at terminal but FTU still reports IN_TRANSIT. This is normal — shipping lines are slow to report discharge. vwc-sync overrides ui_status to AT_PORT based on AIS moored position + terminal geofence match. FTU discharge data arrives later and enriches the record (pod_discharged_at, holds, etc.) without overriding the AT_PORT status.
+14. **AIS-FTU handover lag.** Vessel moored at terminal but FTU still reports IN_TRANSIT. vwc-sync overrides ui_status to AT_PORT based on AIS moored + terminal geofence. FTU discharge data arrives later and enriches the record without overriding AT_PORT.
+15. **AIS ETA wrong for transit vessels.** AIS destination shows a non-WA port (transit or next voyage). AIS ETA calculates distance to wrong port. Always prefer FTU pod_eta for container ETA. AIS ETA only valid when vessel is heading directly to WA as final destination.
 
 ---
 

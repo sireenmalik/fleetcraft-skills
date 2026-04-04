@@ -201,19 +201,42 @@ FTU job STARTS when: vessel moored OR FTU sends discharge webhook, whichever com
 3. When FTU is silent 48h+ after vessel moored:
    - Container stays AT_PORT (from AIS override)
    - Log warning: "FTU lag: {vessel} moored at {terminal} but no discharge data after 48h"
-   - Dispatcher sees the container at terminal and can act on it
 
 4. When AIS and FTU disagree on terminal:
-   - FTU terminal wins for the container (FTU knows the specific berth/facility)
-   - AIS terminal is used only when FTU has no terminal data
-   - Log: "Terminal conflict: AIS={ais_terminal}, FTU={ftu_terminal} — using FTU"
+   - FTU terminal wins for the container
+   - AIS terminal used only when FTU has no terminal data
 
 **Failure boundaries:**
 
 | AIS | FTU | Result |
 |-----|-----|--------|
 | Moored at terminal | Discharged | Both agree. AT_PORT. Normal. |
-| Moored at terminal | Still IN_TRANSIT | Override to AT_PORT. Log warning. Wait for FTU discharge. |
+| Moored at terminal | Still IN_TRANSIT | Override to AT_PORT. Wait for FTU. |
 | No position | Discharged | Trust FTU. AT_PORT. |
 | No position | No data | Stay at last known status. |
-| Moored at terminal A | Discharged at terminal B | FTU terminal wins. Flag for review. |
+| Moored at terminal A | Discharged at terminal B | FTU terminal wins. |
+
+### ETA Priority — FTU First, AIS Backup Only
+
+AIS destination is the VESSEL's plan. FTU pod_eta is the CONTAINER's plan. They can be different.
+
+Example: Vessel route Shanghai → Tacoma → Vancouver → Japan.
+AIS destination: CAVAN>JPTYO (final port is Japan).
+Container POD: Tacoma (gets off at Tacoma).
+AIS ETA would calculate distance to Japan — WRONG for this container.
+FTU ETA says April 15 (Tacoma arrival) — CORRECT.
+
+**ETA priority (NEW — replaces old logic):**
+1. FTU pod_eta exists → USE FTU. Always preferred. Source: 'FTU'
+2. FTU has no ETA AND AIS destination last segment is WA terminal AND SOG > 1 → AIS ETA. Source: 'AIS'
+3. Neither available → null. Show "Awaiting ETA" in dashboard.
+
+**NEVER use AIS ETA when:**
+- AIS destination is NOT a WA terminal (transit port, round trip, next voyage)
+- Vessel is stationary (SOG < 1) — already arrived or anchored
+- Vessel is moored — ETA = 0, vessel is here
+
+**Round trip / next rotation scenario:**
+Vessel finished a round, heading away from WA. Container stays at terminal waiting for next rotation.
+FTU knows the next voyage ETA. AIS shows vessel heading to Asia. AIS ETA is meaningless.
+Only FTU ETA is correct here.
