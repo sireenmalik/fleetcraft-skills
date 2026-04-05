@@ -47,6 +47,21 @@ ssh root@178.128.64.97 'bash /opt/fleetcraft-ais/scripts/validate-schema.sh'
 If any check fails, **DO NOT deploy**. Fix the contract violation first.
 See `fleetcraft-skills/column-registry/SKILL.md` for the full data contract registry.
 
+### E2E test suite (optional, recommended):
+
+After major deploys, run the E2E test suite:
+
+```bash
+ssh root@178.128.64.97 'bash /opt/fleetcraft-ais/scripts/e2e-test.sh'
+```
+
+42 tests covering: container CRUD, dispatch lifecycle with geofence embedding,
+archive/restore with lifecycle snapshot, regression tests for every bug we've fixed,
+cross-layer integrity, and API endpoint validation.
+
+Uses `ALPHA1234` test container — cleans up after itself, no real data touched.
+Exit code 1 on any failure.
+
 ### Standard deploy (fleetcraft-ais or fleetcraft-api repo):
 
 ```bash
