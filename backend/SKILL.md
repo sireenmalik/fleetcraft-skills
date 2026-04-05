@@ -361,6 +361,7 @@ These specific mistakes have caused production regressions:
 16. **API SELECT doesn't return new columns.** Adding a column to a table and writing to it in one endpoint doesn't mean it's returned by read endpoints. When adding new columns to dispatches (queue_start_at, pickup_geofences, etc.), you must update EVERY SELECT that reads from that table — GET /dispatches, GET /api/dispatches/:id, GET /api/driver/loads, GET /api/driver/history. The geofence detention card showed blank because the write path worked but the read path didn't return the new columns.
 17. **Postgres numeric comes as string via JSON.** Postgres numeric/decimal columns return as strings in JSON API responses (e.g., "12.50" not 12.50). Frontend code calling .toFixed() on these values crashes with "toFixed is not a function". Always wrap in Number() first: `Number(value).toFixed(2)`. This crashed the entire Container Tracking page via chassis.daily_rate.
 18. **Ghost skeleton containers.** When FTU returns no vessel data, do NOT create a skeleton container with ui_status='SUBMITTED'. Reject the container with an error. Ghost containers with no vessel, no ETA, no tracking data clutter the dashboard and confuse users. Both FTU registration paths now reject when no vessel data returned.
+19. **Orphaned dispatch — container moved without driver.** FTU reports container picked up (OUT_FOR_DELIVERY) but there's a pending dispatch with no driver milestones. This means another carrier moved the container. Auto-cancel the dispatch. Do NOT block the container status change. The container's lifecycle continues regardless of the dispatch.
 
 ---
 
@@ -378,6 +379,36 @@ Once the container is in the yard, FTU is irrelevant to business logic.
 | Auto-archive | container-sync.js | `dispatches.completed_at` + 24 hours |
 
 **Auto-archive trigger: `dispatches.completed_at` + 24 hours. NOT FTU completed flag.**
+
+### Orphaned dispatch auto-cancellation
+
+When a container's `ui_status` changes to `OUT_FOR_DELIVERY` or `EMPTY_RETURNED` via FTU webhook (not via driver app milestone), check for orphaned dispatches:
+
+```sql
+SELECT id FROM dispatches
+WHERE container_number = $1
+  AND status IN ('pending', 'assigned', 'en_route_pickup')
+```
+
+Verify no driver milestones exist:
+```sql
+SELECT count(*) FROM container_events
+WHERE container_number = $1
+  AND source = 'driver_app'
+  AND dispatch_id = $dispatch_id
+```
+
+If dispatch exists AND zero driver milestones:
+1. `UPDATE dispatches SET status = 'cancelled', completed_at = NOW() WHERE id = $dispatch_id`
+2. `INSERT INTO container_events (event_type='dispatch_cancelled', source='system', payload='{"reason":"container_moved_without_driver"}')`
+3. Log: "Dispatch {dispatch_number} auto-cancelled — container {container_number} moved without driver"
+
+The container then follows normal lifecycle:
+- `OUT_FOR_DELIVERY`: stays active, may get a new dispatch
+- `EMPTY_RETURNED`: auto-archives after 24h via `archiveStaleContainers()`
+- Both paths build `lifecycle_snapshot` at archive time
+
+This check runs in `container-sync` when `ui_status` changes, NOT in the FTU webhook handler. The webhook handler only writes data. Business logic belongs in `container-sync`.
 
 ---
 
