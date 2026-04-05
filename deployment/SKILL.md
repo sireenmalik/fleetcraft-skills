@@ -36,40 +36,40 @@ This is a known session-level OAuth token issue. Fall back to Claude Code for al
 
 All backend code lives on the droplet at `178.128.64.97`.
 
-### Pre-deploy validation (REQUIRED):
+### Standard deploy command
 
-Before every deploy, run the cross-layer schema validator:
-
-```bash
-ssh root@178.128.64.97 'bash /opt/fleetcraft-ais/scripts/validate-schema.sh'
-```
-
-If any check fails, **DO NOT deploy**. Fix the contract violation first.
-See `fleetcraft-skills/column-registry/SKILL.md` for the full data contract registry.
-
-### E2E test suite (optional, recommended):
-
-After major deploys, run the E2E test suite:
+After every code change, deploy and test in one command:
 
 ```bash
-ssh root@178.128.64.97 'bash /opt/fleetcraft-ais/scripts/e2e-test.sh'
+ssh root@178.128.64.97 'bash /opt/fleetcraft-ais/scripts/deploy-and-test.sh'
 ```
 
-42 tests covering: container CRUD, dispatch lifecycle with geofence embedding,
-archive/restore with lifecycle snapshot, regression tests for every bug we've fixed,
-cross-layer integrity, and API endpoint validation.
+This runs:
+1. Git pull both repos (fleetcraft-ais + fleetcraft-api)
+2. Restart PM2 workers (fleet-api, container-sync, vwc-sync)
+3. Contract validator (110+ checks — column sync, terminal_code chain, PM2 processes)
+4. E2E test suite (42+ tests — CRUD, dispatch, archive, regressions, API endpoints)
 
-Uses `ALPHA1234` test container — cleans up after itself, no real data touched.
-Exit code 1 on any failure.
+Uses `ALPHA1234` test container. Cleans up after itself.
+Exit code 0 = safe deploy. Exit code 1 = something broke.
 
-### Standard deploy (fleetcraft-ais or fleetcraft-api repo):
+Git post-commit hook (`.githooks/post-commit`) reminds you to run this after every commit.
+
+### Frontend-only deploy (no backend changes):
+
+```bash
+cd c:\Users\siree\OneDrive\FleetCraft\FleetCraft Git\Fleetcraft
+npm run build
+scp -r dist/* root@178.128.64.97:/var/www/fleetcraft-frontend/dist/
+```
+
+### Manual deploy (if you need to deploy a single worker):
 
 ```bash
 ssh root@178.128.64.97
 cd /opt/fleetcraft-ais    # or /opt/fleetcraft-api
 git fetch origin
 git reset --hard origin/main
-bash /opt/fleetcraft-ais/scripts/validate-schema.sh   # must pass
 pm2 restart <process-name>
 ```
 
