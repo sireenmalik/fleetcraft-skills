@@ -14,6 +14,36 @@ description: >
 
 ---
 
+## Post-troubleshooting checklist (MANDATORY)
+
+After every successful fix, bug resolution, or feature deployment, STOP and check:
+
+1. **Skills update needed?**
+   - Did we learn a new rule? (e.g., "never call .toFixed() on API values")
+   - Did we discover a new error pattern? (e.g., "FTU completed=true is not an archive trigger")
+   - Did a write path or table ownership change?
+   - Add to the relevant skill file: backend, frontend, database, integrations, deployment, driver-app, column-registry
+
+2. **Spec update needed?**
+   - Did the fix change behavior defined in an existing spec? (e.g., spec 001 archive flow)
+   - Does a new spec need to be written? (e.g., orphaned dispatch auto-cancellation)
+   - Update the spec in the `fleetcraft-api/specs/` directory
+
+3. **Column registry update needed?**
+   - Did we add, rename, or remove a column?
+   - Did we change who writes or reads a column?
+   - Did we add a new API endpoint that returns data?
+   - Update `column-registry/SKILL.md`
+
+4. **Contract validator update needed?**
+   - Did we add a new cross-layer check?
+   - Did we fix a bug the validator should have caught?
+   - Update `scripts/validate-schema.sh` and run it
+
+This is NOT optional. Every fix that doesn't update skills will be rediscovered as a bug in a future session. The 30 seconds spent updating skills saves 30 minutes of debugging later.
+
+---
+
 ## Architecture (one sentence)
 
 CQRS with Materialized Views — DigitalOcean PostgreSQL is the single source of truth, SQLite is a write buffer for containers, Supabase is FULLY DISCONNECTED.
