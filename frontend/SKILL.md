@@ -183,3 +183,19 @@ const response = await fetch(`${API_BASE}/api/endpoint`);
 ```
 
 If you find a Supabase import in any component, replace it with a fleet-api fetch call immediately.
+
+---
+
+## 9. Download Report Pattern
+
+The Download Report button in `ContainerDetailsModal` generates a printable HTML report using `window.print()`. No external PDF libraries needed.
+
+- Opens new browser window with print-friendly HTML (white bg, black text, clean tables)
+- Auto-triggers `window.print()` → user saves as PDF
+- Data comes from `container` + `dispatch` objects already in the modal — no new API calls
+- Photos load as `<img>` from DO Spaces URLs
+- Includes: container details, shipment timeline, dispatch milestones, geofence & detention data, milestone photos
+- Print CSS hides browser chrome, margins set to 0
+- Pattern: build HTML string → `window.open` → `document.write` → `setTimeout(print, 600)`
+
+If adding new data sections to the report, add them to `generateDispatchReport()` in `ContainerTracking.tsx`. Keep inline CSS only — no Tailwind in the print window.
