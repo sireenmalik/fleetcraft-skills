@@ -305,9 +305,20 @@ Fleet API runs on port 3001, served via nginx at `api.myfleetcraft.com`.
 - **MMSI resolution order:** `vesselDb.getByName()` first, `vesselDb.getByImo()` fallback
 - **Container count aggregation:** Queries Postgres containers filtered by `user_status IS NULL OR user_status = 'active'`
 - **Terminal geofence mapping:** Moored vessel inside terminal polygon → update container terminal_name in SQLite
-- **Stale cleanup:** Zero active containers AND (no alert flags OR updated > 7 days ago) → delete from cache
-- **Never writes `alerted_*` columns** — dispatcher owns those
+- **Stale cleanup:** Zero IN_TRANSIT containers → auto-reset alert flags → delete from cache (immediate, no 7-day wait)
+- **Writes `alerted_*` columns ONLY to reset them** when vessel lifecycle completes (all containers discharged). Dispatcher sets them to true.
 - **Terminal-agnostic**: No hardcoded terminal names. Works for 2 terminals or 200.
+
+### Vessel lifecycle completion
+A vessel stays on the tracker while it has at least one IN_TRANSIT container (`user_status = 'active'`).
+When the LAST IN_TRANSIT container transitions to AT_PORT:
+1. Alert flags auto-reset (all four set to false)
+2. Next cleanup cycle (30s) removes vessel from `vessels_with_containers`
+3. No 7-day wait — immediate cleanup
+4. Vessel stays in `vessels_cache` (AIS map) but removed from VWC (our tracking)
+
+A vessel carrying 5 containers disappears only when ALL 5 are discharged. Not before.
+Dismissed/held containers (`user_status != 'active'`) do not count — they don't keep the vessel on the tracker.
 
 ### ETA calculation (FTU-first priority)
 
@@ -362,6 +373,7 @@ These specific mistakes have caused production regressions:
 17. **Postgres numeric comes as string via JSON.** Postgres numeric/decimal columns return as strings in JSON API responses (e.g., "12.50" not 12.50). Frontend code calling .toFixed() on these values crashes with "toFixed is not a function". Always wrap in Number() first: `Number(value).toFixed(2)`. This crashed the entire Container Tracking page via chassis.daily_rate.
 18. **Ghost skeleton containers.** When FTU returns no vessel data, do NOT create a skeleton container with ui_status='SUBMITTED'. Reject the container with an error. Ghost containers with no vessel, no ETA, no tracking data clutter the dashboard and confuse users. Both FTU registration paths now reject when no vessel data returned.
 19. **Orphaned dispatch — container moved without driver.** FTU reports container picked up (OUT_FOR_DELIVERY) but there's a pending dispatch with no driver milestones. This means another carrier moved the container. Auto-cancel the dispatch. Do NOT block the container status change. The container's lifecycle continues regardless of the dispatch.
+20. **Stale vessels stuck by alert flags.** Vessel has zero IN_TRANSIT containers but alert flags block DELETE. Fix: auto-reset flags when on_vessel_count = 0 (step 3a in vwc-sync). Cleanup is immediate — no 7-day wait.
 
 ---
 
