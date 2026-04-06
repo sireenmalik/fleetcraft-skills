@@ -373,3 +373,23 @@ Adding a column and writing to it is only half the job. If the API's SELECT quer
 2. **Read path:** Does the SELECT in every GET endpoint include the column?
 
 The geofence columns were written correctly by the milestone handler but not returned by `GET /dispatches` — the detention card showed blank until the SELECT was updated. Also check the frontend mapper — `fetchDispatchLookup()` manually maps fields and silently drops any it doesn't list.
+
+### Dispatch cancel/delete cleanup
+When a dispatch is cancelled or deleted, the cancel endpoint must reset these container columns:
+- `pod_full_out_at` → NULL
+- `empty_terminated_at` → NULL
+- `ui_status` → `'AT_PORT'` (if `pod_discharged_at` exists) or previous state
+- `status` / `current_status` → `'discharged'` (if `pod_discharged_at` exists) or previous state
+- `available_for_pickup` → `true` (if discharged)
+- `updated_at` → NOW()
+
+The container reverts to its pre-dispatch state based on FTU data that still exists (`pod_discharged_at`, `pod_arrival`).
+
+Dispatch row keeps all timestamps for audit (`status='cancelled'`, `completed_at` set).
+`container_events` are NEVER deleted — append-only audit ledger.
+GPS positions (`driver_positions`) are kept — they record what happened.
+
+The map in the container detail panel should only show events and GPS from the CURRENT active dispatch, not from cancelled ones. Filter by `dispatch_id` or by `occurred_at > current_dispatch.created_at`.
+
+### Test data cleanup
+For the permanent test container ALPHA1234: after cancelling a dispatch, also clean up `container_events` and `driver_positions` from the test run so the map shows clean for the next test. This is test-only — production containers keep all events.
