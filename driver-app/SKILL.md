@@ -135,6 +135,32 @@ Driver app (useGpsTracking hook) → local SQLite queue → batch upload every 3
 
 ---
 
+## 6b. Spec 004: Background Photo Upload Queue (DEPLOYED)
+
+Photos save locally and upload in the background. Milestones advance in <1 second.
+
+### Flow:
+```
+capture → save to device → show local thumbnail → enqueue → advance immediately
+Background: queue processes one photo at a time, compresses (1920px, JPEG 70%), uploads when signal available
+```
+
+### Key files:
+- `app/services/upload-queue.ts`: SQLite queue + 10s processing timer + compress + upload + retry
+- `app/driver/load/photo-capture.tsx`: `handleConfirm` enqueues locally, no server wait
+- `server.js`: `POST /api/driver/photos` accepts late photos, appends to dispatch JSONB
+- `app/_layout.tsx`: `initUploadQueue()` on app start resumes pending uploads
+- `app/driver/load/[id].tsx`: amber badge "N photos uploading..." with 5s polling
+
+### Rules:
+- Milestone submit sends timestamp + GPS only, NO photo URLs
+- Photos arrive separately via background queue
+- One upload at a time, network-aware, max 5 retries with backoff
+- Local SQLite queue survives app close/crash
+- Compression: 5MB → ~500KB before upload
+
+---
+
 ## 7. Build and Deploy
 
 ```bash
