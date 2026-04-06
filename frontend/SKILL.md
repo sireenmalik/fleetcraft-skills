@@ -199,3 +199,24 @@ The Download Report button in `ContainerDetailsModal` generates a printable HTML
 - Pattern: build HTML string → `window.open` → `document.write` → `setTimeout(print, 600)`
 
 If adding new data sections to the report, add them to `generateDispatchReport()` in `ContainerTracking.tsx`. Keep inline CSS only — no Tailwind in the print window.
+
+---
+
+## 10. GPS Track Map (Leaflet)
+
+The container detail modal has a 2-column layout:
+- Left: info cards, timeline, geofence, photos, download report
+- Right: Leaflet map showing dispatch GPS track
+
+Map behavior:
+- Always visible — shows terminal pin if no GPS data, Tacoma default if nothing
+- Per-dispatch — filters events by dispatch_id, not container_number
+- Milestone dots color-coded: green (pickup), red (terminal), blue (delivery), purple (return)
+- Dashed polyline connecting all points
+- Corridor geofence drawn as red dashed rectangle
+- Sticky position — stays visible while scrolling left column
+- Mobile (<768px) stacks vertically, map below content at 250px height
+
+Data source: `container_events` with lat/lng, fetched from `GET /api/containers/{cn}/events`
+Map library: Leaflet 1.9.4 from cdnjs (free, no API key)
+Tiles: OpenStreetMap
