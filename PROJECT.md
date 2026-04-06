@@ -14,6 +14,36 @@ description: >
 
 ---
 
+## IMMUTABLE RULE: Read skills before every action
+
+Before writing ANY prompt, code change, architecture decision, or troubleshooting step:
+
+1. Read ALL relevant skill files FIRST
+2. Check if the problem is already documented in error patterns
+3. Check if the solution violates any existing rule
+4. Check if a skill needs updating after the fix
+
+This is NOT optional. This is NOT "when you remember." This is EVERY TIME.
+
+Skills to check by task type:
+- Backend code change → `backend/SKILL.md` + `database/SKILL.md` + `column-registry/SKILL.md`
+- Frontend code change → `frontend/SKILL.md`
+- Driver app change → `driver-app/SKILL.md`
+- Deployment → `deployment/SKILL.md`
+- External API work → `integrations/SKILL.md`
+- New feature → `feature-spec/SKILL.md` + ALL skills above
+- Troubleshooting → ALL skills (the answer is probably already documented)
+
+Every prompt to Claude Code must start with:
+  "Read the skills first:" followed by the relevant skill file paths.
+
+If a prompt doesn't reference skills, it's wrong. Rewrite it.
+
+The 30 seconds spent reading skills saves 30 minutes of debugging.
+The skills exist because we already made the mistake. Don't make it again.
+
+---
+
 ## Post-troubleshooting checklist (MANDATORY)
 
 After every successful fix, bug resolution, or feature deployment, STOP and check:
