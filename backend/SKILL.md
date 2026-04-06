@@ -374,6 +374,7 @@ These specific mistakes have caused production regressions:
 18. **Ghost skeleton containers.** When FTU returns no vessel data, do NOT create a skeleton container with ui_status='SUBMITTED'. Reject the container with an error. Ghost containers with no vessel, no ETA, no tracking data clutter the dashboard and confuse users. Both FTU registration paths now reject when no vessel data returned.
 19. **Orphaned dispatch — container moved without driver.** FTU reports container picked up (OUT_FOR_DELIVERY) but there's a pending dispatch with no driver milestones. This means another carrier moved the container. Auto-cancel the dispatch. Do NOT block the container status change. The container's lifecycle continues regardless of the dispatch.
 20. **Stale vessels stuck by alert flags.** Vessel has zero IN_TRANSIT containers but alert flags block DELETE. Fix: auto-reset flags when on_vessel_count = 0 (step 3a in vwc-sync). Cleanup is immediate — no 7-day wait.
+21. **VWC insert/delete loop.** vwc-sync aggregation groups ALL active containers by vessel and upserts. Cleanup deletes vessels with zero IN_TRANSIT. Result: cleanup removes vessel, aggregation re-inserts it 30s later because non-IN_TRANSIT containers still reference it. Fix: aggregation query must only build rows for vessels that have at least one IN_TRANSIT container. Both aggregation and cleanup use the same visibility rule.
 
 ---
 
