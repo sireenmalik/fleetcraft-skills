@@ -139,6 +139,25 @@ On any action error, show toast with the server's error message. Do NOT remove t
 
 ---
 
+## 5b. Vessel Tracker Data Sources
+
+The vessel tracker map shows TWO categories:
+1. **Tracked vessels** — `GET /vessels/with-containers` (VWC). Only vessels with IN_TRANSIT containers.
+2. **Terminal vessels** — `GET /api/vessels/at-terminals`. Moored at our terminals (proximity match).
+
+**WRONG:** Load all AIS vessels from vessels_cache (shows hundreds of irrelevant ships)
+**RIGHT:** VWC (our containers) + terminal moored only
+
+### Vessel card display
+- Show `pod_name` (FTU destination) first, AIS `destination` as fallback
+- **WRONG:** "Destination: CAVAN>JPTYO" — this is the vessel's multi-port route
+- **RIGHT:** "Destination: Tacoma" — this is where the container gets off
+
+### Vessel pills on container page
+Client-side derived from `filteredContainers.map(c => c.vessel_name)`. Shows all vessels referenced by containers in the current tab. This is correct — do NOT filter by IN_TRANSIT here.
+
+---
+
 ## 6. Numeric Display Safety
 
 Never call `.toFixed()` directly on API values. Postgres numeric types come as strings via JSON.

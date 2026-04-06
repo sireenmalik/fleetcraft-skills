@@ -216,6 +216,13 @@ FTU job STARTS when: vessel moored OR FTU sends discharge webhook, whichever com
 | No position | No data | Stay at last known status. |
 | Moored at terminal A | Discharged at terminal B | FTU terminal wins. |
 
+### AIS destination vs FTU destination
+- AIS `destination` = vessel's multi-port route (e.g., `CAVAN>JPTYO` = Vancouver > Japan)
+- FTU `pod_name` = container's specific discharge port (e.g., `Tacoma`)
+- These can be DIFFERENT — vessel visits multiple ports, container gets off at one
+- Always prefer FTU `pod_name` for container-facing displays (vessel cards, dashboard)
+- AIS `destination` useful only for vessel routing analysis, not container UX
+
 ### ETA Priority — FTU First, AIS Backup Only
 
 AIS destination is the VESSEL's plan. FTU pod_eta is the CONTAINER's plan. They can be different.

@@ -140,11 +140,12 @@ archiveCompletedDispatches():
   2. Sets archived_at + user_status = 'archived' in SQLite
   3. INSERT INTO container_exclusions in Postgres
   4. syncArchivedContainers() moves to archived_containers on next cycle
+  NOTE: Only dispatches.status = 'completed' qualify. Cancelled dispatches do NOT trigger archive.
 
 archiveStaleContainers():
-  1. Queries Postgres for stale containers (EMPTY_RETURNED >24h, OUT_FOR_DELIVERY >7d)
-  2. Same flow: SQLite archived_at + user_status + Postgres tombstone
-  3. archive_reason: 'auto_empty_returned' or 'auto_stale_ofd'
+  1. EMPTY_RETURNED > 24 hours → auto-archive (reason: auto_empty_returned)
+  2. OUT_FOR_DELIVERY > 7 days → auto-archive (reason: auto_stale_ofd) — safety net for stuck containers
+  3. Same flow: SQLite archived_at + user_status + Postgres tombstone
 ```
 
 ### Other user_status Transitions
@@ -375,6 +376,10 @@ These specific mistakes have caused production regressions:
 19. **Orphaned dispatch — container moved without driver.** FTU reports container picked up (OUT_FOR_DELIVERY) but there's a pending dispatch with no driver milestones. This means another carrier moved the container. Auto-cancel the dispatch. Do NOT block the container status change. The container's lifecycle continues regardless of the dispatch.
 20. **Stale vessels stuck by alert flags.** Vessel has zero IN_TRANSIT containers but alert flags block DELETE. Fix: auto-reset flags when on_vessel_count = 0 (step 3a in vwc-sync). Cleanup is immediate — no 7-day wait.
 21. **VWC insert/delete loop.** vwc-sync aggregation groups ALL active containers by vessel and upserts. Cleanup deletes vessels with zero IN_TRANSIT. Result: cleanup removes vessel, aggregation re-inserts it 30s later because non-IN_TRANSIT containers still reference it. Fix: aggregation query must only build rows for vessels that have at least one IN_TRANSIT container. Both aggregation and cleanup use the same visibility rule.
+
+22. **Frontend reads vessel data from wrong source.** Vessel tracker loaded 21 AIS vessels from vessels_cache. Container page grouped by vessel_name showing done vessels. Fix: tracker reads VWC. /containers/vessels filters by IN_TRANSIT. Vessel pills are client-side from visible containers — correct behavior.
+
+23. **AIS destination vs FTU destination.** Vessel card showed CAVAN>JPTYO (Japan) when container's destination is Tacoma. AIS destination = vessel's route. FTU pod_name = container's destination. Fix: show pod_name first, AIS destination as fallback.
 
 ---
 
