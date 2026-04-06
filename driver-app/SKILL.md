@@ -85,13 +85,43 @@ Seven photo capture screens intercept the milestone flow BEFORE milestones fire.
 
 ---
 
-## 5. GPS Tracking
+## 5. GPS Background Tracking
 
-- Background location: always-on during active load
-- 10-second fast polling on loads screen
-- On-focus refresh when app returns to foreground
-- GPS status indicator: green pulsing dot (active), gray (off)
-- Enabled only during: `en_route_pickup`, `en_route_delivery`, `empty_en_route_return`
+GPS tracking is confirmed working. 1,301 positions captured during testing.
+
+### Sampling rates:
+- Moving with active load: every 15 seconds
+- Stopped with active load: every 60 seconds (50m distance threshold)
+
+### Data flow:
+```
+Driver app (useGpsTracking hook) → local SQLite queue → batch upload every 30s
+→ POST /api/driver/positions → driver_positions table
+```
+
+### Known issues:
+- **dispatch_id is NULL** on all positions — server endpoint does not store load_id from request. Workaround: query by `driver_id + time range` overlapping `dispatch.created_at` to `dispatch.completed_at`. Fix needed: server must accept and INSERT dispatch_id/load_id.
+- **Positions stop in background** on some devices — Android battery optimization may kill the background task. Foreground service notification is configured but OEM kill behavior varies.
+- **Null lat/lng filter:** server filters positions where lat or lng is null/undefined/NaN before INSERT. Driver app should also guard before enqueuing.
+
+### Implementation:
+- Hook: `hooks/useGpsTracking.ts`
+- API: `lib/fleetApi.ts` → `uploadPositions()`
+- Type: `GpsPosition` uses `latitude`/`longitude` (Expo convention), server accepts both `lat/lng` and `latitude/longitude`
+- Offline queue: local SQLite `gps_queue.db` — positions survive app crashes
+- Background task: `expo-location` + `expo-task-manager`
+
+---
+
+## 5b. Test Environment (Bellevue)
+
+- **Container:** ALPHA1234 on FLEET CRAFTERY at FLEETCRAFT TEST TERMINAL
+- **Terminal:** FCTEST at 6302 119th Pl SE, Bellevue 98006 (47.5615, -122.1485)
+- **Geofence:** FCTEST — SE 64th St Entry corridor (47.5608, -122.1490 to -122.1475), 25m buffer
+- **ALPHA5678:** IN_TRANSIT anchor container keeping FLEET CRAFTERY in VWC
+- **Archive exclusion:** `data_source = 'test'` skipped by both archive functions in container-sync
+- **Test driver:** phone 2147632305, PIN 1234
+- **E2E test:** uses ALPHA786 (not ALPHA1234) to avoid destroying permanent test data
 
 ---
 

@@ -380,6 +380,8 @@ These specific mistakes have caused production regressions:
 22. **Frontend reads vessel data from wrong source.** Vessel tracker loaded 21 AIS vessels from vessels_cache. Container page grouped by vessel_name showing done vessels. Fix: tracker reads VWC. /containers/vessels filters by IN_TRANSIT. Vessel pills are client-side from visible containers — correct behavior.
 
 23. **AIS destination vs FTU destination.** Vessel card showed CAVAN>JPTYO (Japan) when container's destination is Tacoma. AIS destination = vessel's route. FTU pod_name = container's destination. Fix: show pod_name first, AIS destination as fallback.
+24. **driver_positions dispatch_id is NULL.** GPS positions are recorded but not linked to a dispatch. Server `POST /api/driver/positions` stores driver_id, lat, lng, recorded_at but ignores load_id/dispatch_id from the request body. Workaround: match positions to dispatch by driver_id + time range. Fix: server must accept dispatch_id and INSERT it.
+25. **driver_positions null lat/lng.** Driver app background tracker sends positions before GPS has a fix. Server rejects with NOT NULL constraint on lat column. Fix: server filters null/NaN positions before INSERT. Driver app should also guard: only send when `coords.latitude && coords.longitude` are valid.
 
 ---
 
