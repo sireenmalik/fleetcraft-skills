@@ -117,11 +117,34 @@ Driver app (useGpsTracking hook) → local SQLite queue → batch upload every 3
 
 - **Container:** ALPHA1234 on FLEET CRAFTERY at FLEETCRAFT TEST TERMINAL
 - **Terminal:** FCTEST at 6302 119th Pl SE, Bellevue 98006 (47.5615, -122.1485)
-- **Geofence:** FCTEST — SE 64th St Entry corridor (47.5608, -122.1490 to -122.1475), 25m buffer
+- **Geofence:** FCTEST — Home Test Corridor (47.5462, -122.1806 to -122.1795), 50m buffer
 - **ALPHA5678:** IN_TRANSIT anchor container keeping FLEET CRAFTERY in VWC
 - **Archive exclusion:** `data_source = 'test'` skipped by both archive functions in container-sync
 - **Test driver:** phone 2147632305, PIN 1234
 - **E2E test:** uses ALPHA786 (not ALPHA1234) to avoid destroying permanent test data
+
+---
+
+## 5c. Geofence Detection — Real-Time On-Device Check
+
+Geofence detection uses our own GPS stream, NOT the Android OS geofence engine.
+
+### How it works:
+- `useGpsTracking` accepts `geofences` array + `onGeofenceEnter` callback
+- Foreground `watchPositionAsync` runs every 15 seconds
+- Each position: haversine distance to corridor endpoints
+- If within `buffer_meters * 2` of either endpoint → fires trigger
+- Each trigger fires once per session (`geofenceFired` Set)
+- Driver gets alert: "You entered the terminal area. Queue timer started."
+
+### Detection latency: ~15 seconds (vs Android OS: 1-5 minutes)
+
+- **WRONG:** `expo startGeofencingAsync` → Android OS batches checks → 1-5 min latency
+- **RIGHT:** our GPS stream every 15s → haversine check → instant detection
+
+### Corridor buffer sizing:
+- **Production (Husky, PCT):** 25m buffer = 50m check radius. Terminals have clear entry points.
+- **Test (FCTEST Bellevue):** 50m buffer = 100m check radius. Home testing needs wider zone.
 
 ---
 
