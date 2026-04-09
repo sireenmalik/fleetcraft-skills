@@ -38,6 +38,7 @@ SQLite (container-registry.db)     PostgreSQL (fleetcraft_db)
 ### Who Owns What
 - **SQLite** is a write buffer for container data ONLY. FTU webhooks write here first.
 - **Postgres** is the source of truth for everything. container-sync.js pushes SQLite → Postgres every 30 seconds.
+- **Exception:** Direct-add containers (`data_source = 'direct'`) bypass SQLite entirely — written directly to Postgres via `POST /api/containers/quick-add`. container-sync never sees them.
 - Dispatches, drivers, trucks, chassis, events, exclusions — Postgres ONLY, no SQLite copy.
 
 ---
@@ -86,15 +87,18 @@ Before upserting, container-sync.js loads `container_exclusions` into a Set and 
 
 These are FTU-derived. Do not invent new values.
 
-| ui_status | Meaning | FTU trigger |
-|-----------|---------|-------------|
-| `IN_TRANSIT` | On vessel, en route | Default until discharged |
-| `AT_PORT` | Discharged at terminal | FTU 'discharged from' event |
-| `OUT_FOR_DELIVERY` | Gate out from terminal | FTU 'gate out full' event |
-| `EMPTY_RETURNED` | Empty container returned | FTU 'gate in empty' event |
+| ui_status | Meaning | Set by |
+|-----------|---------|--------|
+| `IN_TRANSIT` | On vessel, en route | FTU webhook (default until discharged) |
+| `AT_PORT` | Discharged at terminal | FTU 'discharged from' event, OR `POST /api/containers/quick-add` (direct-add) |
+| `OUT_FOR_DELIVERY` | Gate out from terminal | FTU 'gate out full' event, OR driver milestone `gate_out` |
+| `EMPTY_RETURNED` | Empty container returned | FTU 'gate in empty' event, OR driver milestone `completed` |
 
 ### Dispatch eligibility
 Only containers where `ui_status = 'AT_PORT'` AND `user_status = 'active'` are dispatch-ready. Both conditions required.
+
+### Direct-add containers
+`POST /api/containers/quick-add` sets `ui_status = 'AT_PORT'` on insert. This is valid — the container is physically at the terminal. No new ui_status value is needed.
 
 ---
 

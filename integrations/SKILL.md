@@ -42,6 +42,14 @@ headers: {
 ### T49 (Terminal 49): DEACTIVATED
 Never reference `t49-container-tracker.js`, T49 API keys, or T49 endpoints. All T49 code is dead code.
 
+### Direct-Add Containers — FTU Not Involved
+Containers added via `POST /api/containers/quick-add` (`data_source = 'direct'`) have NO FTU interaction:
+- No `POST /container/tracking` registration (no subscription created)
+- No webhooks received (no `findteu_shipment_id`)
+- No `DELETE /container/subscription` on archive (guard: `findteu_shipment_id IS NOT NULL`)
+- No FTU re-registration on restore (guard: `data_source != 'direct'`)
+- FTU quota/billing unaffected — zero API calls for direct-add containers
+
 ### FTU completed flag — DO NOT USE AS ARCHIVE TRIGGER
 FTU sends `completed=true` when it has no more tracking updates. This can happen:
 - After vessel arrival (container still on vessel)

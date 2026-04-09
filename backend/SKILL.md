@@ -33,6 +33,7 @@ Every data domain has exactly ONE writer. No exceptions.
 | Domain | Single Writer | File | Writes To |
 |--------|--------------|------|-----------|
 | Container tracking data | FTU webhook handler | `server.js` | SQLite → Postgres via container-sync |
+| Direct-add containers | Fleet API quick-add | `server.js` | Postgres ONLY (bypasses SQLite entirely) |
 | Container user intent | Fleet API endpoints | `server.js` | Postgres containers.user_status (ONLY writer) |
 | Container archive (auto) | container-sync.js | `container-sync.js` | SQLite (archived_at + user_status) + Postgres container_exclusions |
 | Container archive (manual) | Fleet API | `server.js` | Postgres containers + container_exclusions + SQLite delete |
@@ -125,8 +126,8 @@ User clicks Archive → POST /containers/archive
   1. Verify container exists, is not already archived, has no active dispatch
   2. UPDATE containers SET user_status = 'archived', archived_at = NOW() in Postgres
   3. INSERT INTO container_exclusions (tombstone record)
-  4. DELETE from SQLite immediately
-  5. HTTP DELETE to FTU /container/subscription/{findteu_shipment_id} (best-effort)
+  4. DELETE from SQLite — ONLY if data_source != 'direct' (direct-add containers were never in SQLite)
+  5. HTTP DELETE to FTU — ONLY if findteu_shipment_id IS NOT NULL (direct-add containers have no FTU subscription)
   6. INSERT INTO container_events (event_type = 'archive', source = 'dispatcher')
 ```
 
@@ -171,7 +172,8 @@ Restore → POST /containers/restore
   1. UPDATE containers SET user_status = 'active', archived_at = NULL
   2. DELETE FROM container_exclusions
   3. INSERT INTO container_events
-  Note: Next sync cycle resumes normal updates. May need FTU re-registration.
+  Note: Next sync cycle resumes normal updates. May need FTU re-registration
+        UNLESS data_source = 'direct' — direct-add containers were never registered with FTU.
 ```
 
 ### Rules
@@ -192,6 +194,7 @@ Restore → POST /containers/restore
 - `ftu-tracker.js` is KILLED — its cache refresh logic is now in `vwc-sync.js`
 - Webhooks arrive at Fleet API → SQLite → Postgres via container-sync
 - FTU account #14978
+- **Exception:** Direct-add containers (`data_source = 'direct'`) bypass FTU entirely — no registration, no webhooks, no unregistration. They are added via `POST /api/containers/quick-add` directly to Postgres as AT_PORT.
 
 ### Deactivated System
 - **T49 (Terminal 49)** — NEVER reference `t49-container-tracker.js` as active
@@ -394,10 +397,22 @@ Once the container is in the yard, FTU is irrelevant to business logic.
 | Steps | Owner | Trigger |
 |-------|-------|---------|
 | 1-3 | FTU (vessel inbound → arrival → discharge) | FTU webhook |
+| BYPASS | Direct terminal pickup — skips steps 1-3 | POST /api/containers/quick-add |
 | 4-7 | Future Tradlinx (holds → available → LFD) | Not yet integrated |
 | 8 | Web UI (dispatch created) | POST /api/dispatches |
 | 9-25 | Driver app (pickup → delivery → empty return → complete) | POST /api/driver/loads/:id/milestone |
 | Auto-archive | container-sync.js | `dispatches.completed_at` + 24 hours |
+
+### Direct Terminal Pickup (FTU Bypass)
+When a container is already at the terminal, dispatchers can skip FTU entirely:
+- `POST /api/containers/quick-add` writes directly to Postgres with `data_source = 'direct'`, `ui_status = 'AT_PORT'`, `available_for_pickup = true`
+- No SQLite write, no FTU registration, no vessel tracking
+- `vessel_name` defaults to `'Direct Request'` (overridable)
+- `terminal_name` is required (dispatcher selects from dropdown)
+- Container enters the lifecycle at step 8 (dispatch creation) — identical from that point forward
+- container-sync never sees these containers (not in SQLite) — natural isolation
+- vwc-sync ignores them ("Direct Request" has no MMSI)
+- Auto-archive rules still apply (dispatch completion + 24h, EMPTY_RETURNED + 24h)
 
 **Auto-archive trigger: `dispatches.completed_at` + 24 hours. NOT FTU completed flag.**
 

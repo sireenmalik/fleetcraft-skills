@@ -56,7 +56,7 @@ These columns identify a container and never change after creation.
 | shipment_ref | write | SELECT + INSERT | varchar | read | -- |
 | bill_of_lading | write | SELECT + INSERT | varchar | read | display |
 | findteu_shipment_id | write | SELECT + INSERT (COALESCE) | text | FTU unregister | -- |
-| data_source | default 'findteu' | SELECT + INSERT | text | read | -- |
+| data_source | default 'findteu', also 'direct' (quick-add), 'test' (E2E) | SELECT + INSERT | text | read | -- |
 | tracking_request_id | write | -- | -- | -- | -- |
 
 ### Notes
@@ -259,6 +259,18 @@ These columns exist in Postgres `containers` but are written by other sources, n
 | estimated_arrival | fleet-api | computed ETA |
 | actual_arrival | fleet-api | actual arrival |
 | discharged_at | fleet-api | discharge timestamp |
+
+---
+
+### Direct-Add Containers (Postgres-Only)
+
+Containers added via `POST /api/containers/quick-add` with `data_source = 'direct'` exist in Postgres only — they never enter SQLite. This means:
+- container-sync.js never sees them (reads from SQLite)
+- No column sync gap risk (no bridge to cross)
+- Archive must skip SQLite DELETE (`data_source != 'direct'` guard)
+- Archive must skip FTU unregister (`findteu_shipment_id IS NULL`)
+- Restore must skip FTU re-registration (`data_source = 'direct'` guard)
+- All other Postgres operations (dispatch, milestones, auto-archive) work identically
 
 ---
 

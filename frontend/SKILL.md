@@ -158,6 +158,39 @@ Client-side derived from `filteredContainers.map(c => c.vessel_name)`. Shows all
 
 ---
 
+## 5c. Add Container Modal — Direct Terminal Pickup Toggle
+
+The Add Container modal (`AddContainerModal` in `ContainerTracking.tsx`) has a toggle for direct terminal pickup:
+
+### Toggle states:
+| State | Background | Border | Label | Subtitle |
+|-------|-----------|--------|-------|----------|
+| OFF (default) | `#FAEEDA` (amber) | `#EF9F27` | "Direct terminal pickup — OFF" | "Skip ocean tracking — container is already at the terminal" |
+| ON | `#FCEBEB` (red) | `#E24B4A` | "Direct terminal pickup — ON" | "No ocean tracking — container added directly as available at terminal" |
+
+### OFF mode (FTU tracking):
+- Multi-line textarea for container numbers / B/L numbers
+- Carrier (SCAC) dropdown with auto-detect
+- Submits to `POST /containers/track-batch` (existing FTU flow)
+
+### ON mode (direct-add):
+- Single container number input
+- Terminal dropdown (required): Husky Terminal — Tacoma, PCT — Tacoma, T18 — Seattle
+- Vessel name input (pre-filled "Direct Request", editable)
+- Shipping line input (optional)
+- Info banner: "No FTU charges — container added directly to your active list"
+- Red submit button: "Add to terminal"
+- Calls `POST /api/containers/quick-add`
+- Success toast: "Container added to \<terminal\> — ready for dispatch"
+
+### Rules:
+- Toggle defaults to OFF — FTU tracking is the normal path
+- Switching the toggle resets the form
+- Direct-add containers appear immediately in the Active tab with AT_PORT status (yellow badge)
+- Dispatch button appears immediately (`available_for_pickup = true`)
+
+---
+
 ## 6. Numeric Display Safety
 
 Never call `.toFixed()` directly on API values. Postgres numeric types come as strings via JSON.
