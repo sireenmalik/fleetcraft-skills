@@ -415,3 +415,44 @@ SQLite database files are runtime data, not source code. They must NEVER be trac
 - container-sync.js runs `PRAGMA wal_checkpoint(PASSIVE)` at end of each cycle
 - If WAL grows unbounded: `sqlite3 <db> "PRAGMA wal_checkpoint(TRUNCATE);"`
 - Never use `git reset --hard` to fix WAL issues — that was the old workaround that caused the column loss bug
+
+---
+
+## 12. Deploy Versioning
+
+Every deploy is tagged with a semantic version.
+
+### Version naming
+Format: `v{major}.{minor}-{feature-slug}`
+- **Major:** breaking or architectural (new tables, workers, irreversible migrations)
+- **Minor:** additive features and fixes (new endpoint, frontend change)
+
+Examples: `v1.0-baseline`, `v1.1-direct-terminal-pickup`, `v1.2-push-notifications`, `v2.0-agentic-dispatch`
+
+### Version manifest
+Location: `fleetcraft-api/versions/`
+
+Each deploy creates a JSON manifest with:
+- Commit hashes for every repo (or `"unchanged"`)
+- Migration file (if any, or `"none"`)
+- Rollback SQL
+- Rollback steps (ordered list)
+- Dependency chain (`depends_on` — previous version)
+
+### Health endpoint
+`GET /api/health` returns current version, uptime, and timestamp.
+Use this to verify what's deployed without SSH.
+
+### Pre-deploy checklist
+1. Tag current state with a version manifest (`versions/vX.Y-slug.json`)
+2. Backup frontend: `cp -r dist dist-backup`
+3. Snapshot relevant DB state (e.g., `SELECT count(*), data_source FROM containers GROUP BY data_source`)
+4. Deploy (git pull + pm2 restart + scp frontend)
+5. Verify via `GET /api/health` — must return new version string
+6. Run E2E tests (`deploy-and-test.sh`)
+
+### Rollback
+1. Read the current version manifest in `versions/`
+2. Follow `rollback_steps` in order
+3. Run `rollback_sql` if data cleanup needed
+4. Verify via health endpoint or test suite
