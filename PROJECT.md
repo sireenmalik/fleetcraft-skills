@@ -102,3 +102,4 @@ CQRS with Materialized Views — DigitalOcean PostgreSQL is the single source of
 1. **Never reconstruct a file from memory.** Pull current version from GitHub before editing.
 2. **Sync writers never touch user_status.** Only Fleet API endpoints write user intent columns.
 3. **Supabase does not exist.** If you find code referencing it, that code is dead. Remove it.
+4. **Direct-add containers bypass SQLite.** `data_source = 'direct'` goes straight to Postgres. No FTU, no webhooks, no sync workers.
