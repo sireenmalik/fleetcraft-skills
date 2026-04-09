@@ -456,3 +456,21 @@ Use this to verify what's deployed without SSH.
 2. Follow `rollback_steps` in order
 3. Run `rollback_sql` if data cleanup needed
 4. Verify via health endpoint or test suite
+
+---
+
+## 13. Database Backups
+
+Three backup layers protect Postgres data:
+
+| Layer | Frequency | Destination | Retention | Trigger |
+|-------|-----------|-------------|-----------|---------|
+| Daily | 2am PT (9am UTC) | DO Spaces backups/postgres/ | 30 days | Cron |
+| Weekly | Saturday 9am | OneDrive FleetCraft/backups/postgres/ | Manual cleanup | Windows Task Scheduler |
+| Pre-deploy | Before every release | DO Spaces backups/postgres/ | 30 days | deploy-and-test.sh Step 0 |
+
+Backup script: /opt/fleetcraft-ais/scripts/pg-backup.sh
+Log: /var/log/fleetcraft-backup.log
+Cron: 0 9 * * * (verify with crontab -l)
+
+Restore: gunzip the .sql.gz file, pipe to psql. Always dump current state before restoring.
