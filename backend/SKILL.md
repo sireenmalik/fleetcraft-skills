@@ -418,12 +418,21 @@ When a container is already at the terminal, dispatchers can skip FTU entirely:
 - No SQLite write, no FTU registration, no vessel tracking
 - `vessel_name` defaults to `'Direct Request'` (overridable)
 - `terminal_name` is required (dispatcher selects from dropdown)
+- `terminal_code` is derived from `terminal_name` using a mapping table (e.g., "PCT Tacoma" → "PCT", "Husky Terminal" → "HUSKY")
 - Container enters the lifecycle at step 8 (dispatch creation) — identical from that point forward
 - container-sync never sees these containers (not in SQLite) — natural isolation
 - vwc-sync ignores them ("Direct Request" has no MMSI)
 - Auto-archive rules still apply (dispatch completion + 24h, EMPTY_RETURNED + 24h)
 
 **Auto-archive trigger: `dispatches.completed_at` + 24 hours. NOT FTU completed flag.**
+
+### terminal_code Resolution
+The quick-add endpoint derives `terminal_code` from `terminal_name` using a mapping table (e.g., "PCT Tacoma" → "PCT", "Husky Terminal" → "HUSKY"). This is critical because dispatch creation embeds geofences by looking up `terminal_code`. Without `terminal_code`, `pickup_geofences` will be empty `[]`.
+
+Dispatch geofence lookup has three fallbacks:
+1. `terminal_code` from request body
+2. `container.terminal_code` or `container.moored_terminal_code`
+3. `container.terminal_name` matched against geofences table
 
 ### Orphaned dispatch auto-cancellation
 

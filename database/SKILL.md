@@ -38,7 +38,7 @@ SQLite (container-registry.db)     PostgreSQL (fleetcraft_db)
 ### Who Owns What
 - **SQLite** is a write buffer for container data ONLY. FTU webhooks write here first.
 - **Postgres** is the source of truth for everything. container-sync.js pushes SQLite → Postgres every 30 seconds.
-- **Exception:** Direct-add containers (`data_source = 'direct'`) bypass SQLite entirely — written directly to Postgres via `POST /api/containers/quick-add`. container-sync never sees them.
+- **Exception:** Direct-add containers (`data_source = 'direct'`) bypass SQLite entirely — written directly to Postgres via `POST /api/containers/quick-add`. container-sync never sees them. Direct-add containers have: `data_source='direct'`, `terminal_code` derived from `terminal_name` mapping (e.g., "PCT" → "PCT", "Husky Terminal" → "HUSKY").
 - Dispatches, drivers, trucks, chassis, events, exclusions — Postgres ONLY, no SQLite copy.
 
 ---
