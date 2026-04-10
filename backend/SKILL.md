@@ -230,6 +230,15 @@ FTU does NOT provide: LFD, holds detail (customs/freight/terminal), yard locatio
 - Current state in `containers` is rebuilt/projected from events
 - `container_events` rows are immutable — INSERT only, no UPDATE, no DELETE
 
+### Geofence Event Pattern
+The `terminal_area_arrived` event is the only auto-triggered milestone. It follows a specific pattern:
+
+- **Source:** driver app (on-device geofence detection)
+- **Fields:** `auto_triggered: true`, `triggered_by: 'geofence'`, `occurred_at` from GPS reading
+- **Side effect:** Sets `dispatches.queue_start_at` WHERE `queue_start_at IS NULL` (idempotent)
+- **Idempotency:** Second fire does NOT overwrite — the WHERE NULL guard is the server-side backstop
+- **Timestamp:** Uses client-provided `occurred_at` via `COALESCE($1::timestamptz, now())`
+
 ---
 
 ## 6. PM2 Workers — Current State
@@ -239,16 +248,16 @@ FTU does NOT provide: LFD, holds detail (customs/freight/terminal), yard locatio
 | 0 | dispatcher | dispatcher-orchestrator.js | online | Email/alert dispatching (Resend) |
 | 2 | ais-collector-v2 | index.js | online | AIS WebSocket → SQLite vessel_registry |
 | 4 | container-sync | container-sync.js | online | SQLite → PG containers + auto-archive (stale + dispatch) |
-| — | vwc-sync | vwc-sync.js | online | Single owner of vessels_with_containers + vessels_cache |
+| 9 | vwc-sync | vwc-sync.js | online | Single owner of vessels_with_containers + vessels_cache |
 | 7 | fleet-api | server.js | online | Express API (port 3001) |
 | 5 | dispatch-worker | here-dispatch-worker.js | STOPPED | Future HERE routing |
 
-### Killed Workers (do NOT restart)
+### Killed Workers — PERMANENTLY KILLED (do NOT restart)
 | ID | Name | Reason killed | Replaced by |
 |----|------|--------------|-------------|
-| 1 | vessel-sync | Dual-writer on vessels_with_containers | vwc-sync.js |
-| 3 | ftu-tracker | Dual-writer on vessels_with_containers, cache refresh redundant | vwc-sync.js |
-| 8 | archive-worker | Logic merged into container-sync.js | container-sync.js |
+| 1 | vessel-sync | PERMANENTLY KILLED — dual-writer on vessels_with_containers | vwc-sync.js |
+| 3 | ftu-tracker | PERMANENTLY KILLED — dual-writer on vessels_with_containers, cache refresh redundant | vwc-sync.js |
+| 8 | archive-worker | PERMANENTLY KILLED — logic merged into container-sync.js | container-sync.js |
 
 ### Adding a New Worker
 1. Create the .js file in `/opt/fleetcraft-ais/` or `/opt/fleetcraft-api/`
