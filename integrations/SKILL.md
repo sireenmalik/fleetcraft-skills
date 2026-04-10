@@ -103,10 +103,14 @@ server.js webhook handler lines 684-716 currently auto-archive on `completed=tru
 - 100 trucks each check their own dispatch geofences locally — no server load
 
 ### Terminal geofences configured:
-- **Husky Terminal:** Corridor on approach road, 25m buffer
+- **Husky Terminal:** Polygon covering Lot F + adjacent roads (Maxwell Way to E 19th St, Thorne Rd to Port of Tacoma Rd), no buffer (exact boundary)
 - **PCT Tacoma:** Bidirectional corridor on Alexander Ave E, 25m buffer
 - **T18 Seattle:** Two entry corridors (16th Ave SW + Klickitat Bridge), 25m buffer
 - **FCTEST (test):** Bellevue test corridor, 50m buffer
+
+Geofence types supported:
+- `polygon` — ray casting point-in-polygon (Husky). Exact boundary, buffer_meters = 0.
+- `corridor` — haversine distance to endpoints (PCT, T18). Check radius = buffer_meters * 2.
 
 ### Detention timing:
 - Queue start: `queue_start_at` — set automatically by corridor geofence fire (idempotent, WHERE NULL)

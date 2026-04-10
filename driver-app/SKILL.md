@@ -147,8 +147,8 @@ Seven photo capture screens intercept the milestone flow BEFORE milestones fire.
 1. Driver accepts load → app loads `pickup_geofences` from dispatch payload into memory
 2. `useGpsTracking` accepts geofences array + `onGeofenceEnter` callback
 3. Foreground `watchPositionAsync` fires every 15 seconds
-4. Each GPS position: haversine distance calculated to each corridor endpoint
-5. If distance ≤ `buffer_meters * 2` of either endpoint → trigger fires
+4. Each GPS position: if polygon type → ray casting point-in-polygon check; if corridor type → haversine distance to endpoints
+5. If inside polygon OR within `buffer_meters * 2` of corridor endpoint → trigger fires
 6. Trigger fires ONCE per dispatch (`geofenceFired` Set keyed by dispatch ID)
 7. On fire: calls `POST /api/driver/loads/:id/milestone` with:
    - `milestone: 'terminal_area_arrived'`
@@ -167,13 +167,15 @@ Seven photo capture screens intercept the milestone flow BEFORE milestones fire.
 - Dispatch is `completed` or `cancelled`
 - `pickup_geofences` is null or empty array
 
-### Corridor buffer sizing:
-| Terminal | buffer_meters | Check radius | Notes |
-|----------|--------------|--------------|-------|
-| Husky Terminal | 25m | 50m | Clear single entry point |
-| PCT Tacoma | 25m | 50m | Alexander Ave E corridor |
-| T18 Seattle | 25m | 50m | Two entry corridors |
-| FCTEST (test) | 50m | 100m | Home testing needs wider zone |
+### Geofence sizing:
+| Terminal | Type | buffer_meters | Check radius | Notes |
+|----------|------|--------------|--------------|-------|
+| Husky Terminal | polygon | 0 | exact | Lot F rectangle (Maxwell Way / Thorne Rd / E 19th / Port of Tacoma Rd) |
+| PCT Tacoma | corridor | 25m | 50m | Alexander Ave E corridor |
+| T18 Seattle | corridor | 25m | 50m | Two entry corridors |
+| FCTEST (test) | corridor | 50m | 100m | Home testing needs wider zone |
+
+Polygon geofence uses ray casting algorithm (odd edge crossings = inside). No buffer needed — the polygon boundary IS the detection zone.
 
 ### What NOT to do:
 ```
