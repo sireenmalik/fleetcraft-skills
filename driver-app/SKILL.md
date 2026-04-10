@@ -3,8 +3,8 @@ name: fleetcraft-driver-app
 description: >
   FleetCraft driver mobile app development rules. Use this skill whenever
   working on the fleetcraft-driver Expo/React Native app, modifying
-  milestone flows, photo capture, GPS tracking, or Fleet API driver
-  endpoints. Prevents known crash causes and auth issues.
+  milestone flows, photo capture, GPS tracking, geofence detection, or
+  Fleet API driver endpoints. Prevents known crash causes and auth issues.
 ---
 
 # FleetCraft Driver App — Development Rules
@@ -17,11 +17,12 @@ description: >
 |-------|------------|
 | Framework | Expo SDK 52+ / React Native |
 | Navigation | Expo Router (file-based) |
-| State | React Context + useReducer |
+| State | React Context + useReducer (DispatchContext) |
 | Build | EAS Build (account: `sireenmalik`) |
 | API | Fleet API at `api.myfleetcraft.com` |
 | Photos | DO Spaces (`fleetcraft-media`, `sfo3`) |
 | Maps | HERE Technologies |
+| Local DB | expo-sqlite (GPS queue, offline milestone queue) |
 
 ### Local repo: `c:\expo\fleetcraft-driver`
 
@@ -47,7 +48,17 @@ const token = jwt.sign(payload, 'fleetcraft_token');
 
 ---
 
-## 3. Milestone Flow (16 steps)
+## 3. Dispatch Status Flow (19 statuses)
+
+```
+pending → assigned → en_route_pickup → chassis_info_required → at_terminal →
+in_queue → loaded → gate_out → in_transit_parked → en_route_delivery →
+at_delivery → delivered → empty_en_route_return → in_transit_parked_return →
+at_return_terminal → chassis_returned → returned → completed
+(cancelled can happen from any status)
+```
+
+### Milestone flow the driver walks through:
 
 ```
 en_route_pickup → chassis_info → at_terminal → in_queue →
@@ -57,10 +68,11 @@ at_return_terminal → chassis_returned → completed
 ```
 
 ### Rules:
-- Each milestone tap captures `lat`, `lng`, `occurred_at`
-- GPS + timestamp on EVERY milestone — no exceptions
+- Each milestone tap captures `lat`, `lng`, `occurred_at` — no exceptions
+- GPS + timestamp on EVERY milestone via one-shot location request
 - Milestones write to `container_events` table via Fleet API
-- Status updates write to `dispatches` table
+- Status updates write to `dispatches` table via Fleet API
+- The Fleet API is the ONLY writer for dispatches and container_events
 
 ---
 
@@ -68,127 +80,181 @@ at_return_terminal → chassis_returned → completed
 
 Seven photo capture screens intercept the milestone flow BEFORE milestones fire.
 
-| Photo | Column | Type | When |
-|-------|--------|------|------|
-| Ingate | `ingate_photo_url` | TEXT | At terminal gate |
-| Chassis | `chassis_photo_urls` | JSONB | After chassis pickup |
-| Seal | `seal_photo_urls` | JSONB | Container seal verification |
-| Outgate | `outgate_photo_url` | TEXT | Terminal gate out |
-| Delivery arrival | `delivery_arrival_photo_url` | TEXT | Arriving at delivery |
-| POD | `pod_photo_url` | TEXT | Proof of delivery |
-| Return | `return_photo_urls` | JSONB | Empty return at terminal |
+| Milestone | Photo Slots | Dispatch Column | Type | Multi? |
+|-----------|-------------|-----------------|------|--------|
+| at_terminal (ingate) | gate booth + ticket | `ingate_photo_url` | TEXT (single) | No |
+| chassis_info | tires, lights, frame, pin lock, overview | `chassis_photo_urls` | JSONB array | Yes |
+| container_loaded (seal) | seal number, container face | `seal_photo_urls` | JSONB array | Yes |
+| gate_out (outgate) | EIR slip | `outgate_photo_url` | TEXT (single) | No |
+| at_delivery | delivery location | `delivery_arrival_photo_url` | TEXT (single) | No |
+| pod_captured | delivered goods / dock | `pod_photo_url` | TEXT (single) | No |
+| at_return_terminal | return receipt, final condition | `return_photo_urls` | JSONB array | Yes |
+
+### Multi-photo support (all slots):
+- Max 5 photos per slot (`MAX_PHOTOS_PER_SLOT = 5`)
+- `+` button with dashed border appears when slot has < 5 photos
+- `X` overlay button on each thumbnail to remove individual photos
+- Counter shows `(N/5)` next to each slot label
+- Alert shown when trying to add 6th photo: "Maximum 5 photos"
 
 ### Upload endpoint: `POST /api/driver/photos/upload`
+- Uses `multer` for file processing (10MB limit in Express)
+- Nginx allows 20MB request bodies (`client_max_body_size 20M`)
 - Uploads to DO Spaces bucket `fleetcraft-media`
 - Returns public HTTPS URL
-- URL stored in dispatch record
+- URL stored in dispatch record columns listed above
+
+### Upload flow:
+1. Driver captures photo — stored locally as URI
+2. On milestone submit — photos upload sequentially to Fleet API
+3. Fleet API → DO Spaces → returns URL
+4. Milestone call includes `photo_urls` array
+5. Server writes URLs to dispatch columns + container_events
 
 ---
 
-## 5. GPS Background Tracking
+## 5. GPS Tracking
 
-GPS tracking is confirmed working. 1,301 positions captured during testing.
+### Hook: `useGpsTracking` in `hooks/useGpsTracking.ts`
 
-### Sampling rates:
-- Moving with active load: every 15 seconds
-- Stopped with active load: every 60 seconds (50m distance threshold)
+**Architecture:**
+- Foreground `watchPositionAsync` runs every 15 seconds during active load
+- Positions queued in local SQLite (`gps_queue` table) with `synced` flag
+- Batch upload: flushes queue to `POST /api/driver/positions` every 30 seconds
+- Background task: `TaskManager.defineTask('FLEETCRAFT_GPS')` for OS-level tracking
+- Old synced records cleaned up after 24 hours
 
-### Data flow:
-```
-Driver app (useGpsTracking hook) → local SQLite queue → batch upload every 30s
-→ POST /api/driver/positions → driver_positions table
-```
+**GPS collection intervals:**
+| Driver State | Interval | Rationale |
+|-------------|----------|-----------|
+| Active load (moving) | 15 seconds | High-resolution tracking, geofence detection |
+| Active load (stopped) | 60 seconds | Reduced battery drain at terminals |
+| Available (no load) | 5 minutes | Background awareness for dispatch planning |
+| Off duty | No collection | Privacy protection |
 
-### Known issues:
-- **dispatch_id is NULL** on all positions — server endpoint does not store load_id from request. Workaround: query by `driver_id + time range` overlapping `dispatch.created_at` to `dispatch.completed_at`. Fix needed: server must accept and INSERT dispatch_id/load_id.
-- **Positions stop in background** on some devices — Android battery optimization may kill the background task. Foreground service notification is configured but OEM kill behavior varies.
-- **Null lat/lng filter:** server filters positions where lat or lng is null/undefined/NaN before INSERT. Driver app should also guard before enqueuing.
-
-### Implementation:
-- Hook: `hooks/useGpsTracking.ts`
-- API: `lib/fleetApi.ts` → `uploadPositions()`
-- Type: `GpsPosition` uses `latitude`/`longitude` (Expo convention), server accepts both `lat/lng` and `latitude/longitude`
-- Offline queue: local SQLite `gps_queue.db` — positions survive app crashes
-- Background task: `expo-location` + `expo-task-manager`
+**GPS status indicator:**
+- Load detail screen: green pulsing dot + "GPS Active" / gray dot + "GPS Off"
+- Home screen: small 7px dot next to driver name, green if any load in tracking status
+- Tracking enabled during: `en_route_pickup`, `en_route_delivery`, `empty_en_route_return`
 
 ---
 
-## 5b. Test Environment (Bellevue)
+## 6. Geofence Detection — Real-Time On-Device Check
 
-- **Container:** ALPHA1234 on FLEET CRAFTERY at FLEETCRAFT TEST TERMINAL
-- **Terminal:** FCTEST at 6302 119th Pl SE, Bellevue 98006 (47.5615, -122.1485)
-- **Geofence:** FCTEST — Home Test Corridor (47.5462, -122.1806 to -122.1795), 50m buffer
-- **ALPHA5678:** IN_TRANSIT anchor container keeping FLEET CRAFTERY in VWC
-- **Archive exclusion:** `data_source = 'test'` skipped by both archive functions in container-sync
-- **Test driver:** phone 2147632305, PIN 1234
-- **E2E test:** uses ALPHA786 (not ALPHA1234) to avoid destroying permanent test data
-
----
-
-## 5c. Geofence Detection — Real-Time On-Device Check
-
-Geofence detection uses our own GPS stream, NOT the Android OS geofence engine.
+> **CRITICAL:** Geofence detection uses our own GPS stream, NOT the Android OS geofence engine. The OS engine (`startGeofencingAsync`) batches checks with 1-5 minute latency. Our approach checks every 15 seconds via the GPS stream for instant detection.
 
 ### How it works:
-- `useGpsTracking` accepts `geofences` array + `onGeofenceEnter` callback
-- Foreground `watchPositionAsync` runs every 15 seconds
-- Each position: haversine distance to corridor endpoints
-- If within `buffer_meters * 2` of either endpoint → fires trigger
-- Each trigger fires once per session (`geofenceFired` Set)
-- Driver gets alert: "You entered the terminal area. Queue timer started."
+1. Driver accepts load → app loads `pickup_geofences` from dispatch payload into memory
+2. `useGpsTracking` accepts geofences array + `onGeofenceEnter` callback
+3. Foreground `watchPositionAsync` fires every 15 seconds
+4. Each GPS position: haversine distance calculated to each corridor endpoint
+5. If distance ≤ `buffer_meters * 2` of either endpoint → trigger fires
+6. Trigger fires ONCE per dispatch (`geofenceFired` Set keyed by dispatch ID)
+7. On fire: calls `POST /api/driver/loads/:id/milestone` with:
+   - `milestone: 'terminal_area_arrived'`
+   - `auto_triggered: true`
+   - `triggered_by: 'geofence'`
+   - `lat`, `lng`, `occurred_at` from the GPS reading
+8. Driver sees alert: "You entered the terminal area. Queue timer started."
 
-### Detection latency: ~15 seconds (vs Android OS: 1-5 minutes)
+### Detection window (statuses where geofence is armed):
+- `en_route_pickup` → driver heading to terminal
+- `chassis_info_required` → driver entered chassis details but still approaching
 
-- **WRONG:** `expo startGeofencingAsync` → Android OS batches checks → 1-5 min latency
-- **RIGHT:** our GPS stream every 15s → haversine check → instant detection
+### Detection stops when:
+- `geofenceFired` flag is true for this dispatch ID
+- Dispatch status is `at_terminal` or any later status
+- Dispatch is `completed` or `cancelled`
+- `pickup_geofences` is null or empty array
 
 ### Corridor buffer sizing:
-- **Production (Husky, PCT):** 25m buffer = 50m check radius. Terminals have clear entry points.
-- **Test (FCTEST Bellevue):** 50m buffer = 100m check radius. Home testing needs wider zone.
+| Terminal | buffer_meters | Check radius | Notes |
+|----------|--------------|--------------|-------|
+| Husky Terminal | 25m | 50m | Clear single entry point |
+| PCT Tacoma | 25m | 50m | Alexander Ave E corridor |
+| T18 Seattle | 25m | 50m | Two entry corridors |
+| FCTEST (test) | 50m | 100m | Home testing needs wider zone |
+
+### What NOT to do:
+```
+WRONG: expo startGeofencingAsync → Android OS batches checks → 1-5 min latency
+RIGHT: our GPS stream every 15s → haversine check → instant detection
+```
+
+### Server side (Fleet API):
+- `terminal_area_arrived` milestone handler sets `dispatches.queue_start_at` WHERE `queue_start_at IS NULL`
+- Idempotent — second fire does not overwrite the first timestamp
+- Event logged to `container_events` with `auto_triggered: true`
 
 ---
 
-## 6. Known Crash Causes
+## 7. Offline Mode
+
+Terminal areas and rural delivery locations often have poor cellular coverage. The app must function offline with transparent sync on reconnect.
+
+### Offline-capable (queued locally):
+- GPS position collection (SQLite `gps_queue` table)
+- Milestone advancement (queued with timestamp and GPS, synced on reconnect)
+- Photo capture (stored as local URIs, uploaded on reconnect)
+- Geofence detection (fires locally, milestone call queued for sync)
+
+### Requires connectivity:
+- Accepting new load assignments
+- Turn-by-turn navigation
+- Viewing updated container status from FTU
+- Photo uploads to DO Spaces
+
+---
+
+## 8. Known Crash Causes
 
 1. **`advanceMilestone` after completion:** Navigate to `/driver/history` FIRST, then fire `advanceMilestone` in background. If milestone triggers state refresh before navigation, the load disappears from state and the app crashes.
 
-2. **`EXPO_PUBLIC_FLEET_API_URL` missing:** This env var must be baked into the APK via `eas.json`. It cannot be changed at runtime. If the app can't reach the API, this is the first thing to check.
+2. **`EXPO_PUBLIC_FLEET_API_URL` missing:** This env var must be baked into the APK via `eas.json`. It cannot be changed at runtime. If the app can't reach the API, check this first.
 
-3. **Alert.prompt on Android:** Does not exist. Use a custom modal for text input (e.g., chassis number entry).
+3. **`Alert.prompt` on Android:** Does not exist. Use a custom modal for text input (e.g., chassis number entry).
 
----
+4. **Photo upload 413 error:** Nginx must have `client_max_body_size 20M`. Without this, uploads over 1MB are rejected by nginx before reaching Express. Express/multer limit is 10MB.
 
-## 6b. Spec 004: Background Photo Upload Queue (DEPLOYED)
-
-Photos save locally and upload in the background. Milestones advance in <1 second.
-
-### Flow:
-```
-capture → save to device → show local thumbnail → enqueue → advance immediately
-Background: queue processes one photo at a time, compresses (1920px, JPEG 70%), uploads when signal available
-```
-
-### Key files:
-- `app/services/upload-queue.ts`: SQLite queue + 10s processing timer + compress + upload + retry
-- `app/driver/load/photo-capture.tsx`: `handleConfirm` enqueues locally, no server wait
-- `server.js`: `POST /api/driver/photos` accepts late photos, appends to dispatch JSONB
-- `app/_layout.tsx`: `initUploadQueue()` on app start resumes pending uploads
-- `app/driver/load/[id].tsx`: amber badge "N photos uploading..." with 5s polling
-
-### Rules:
-- Milestone submit sends timestamp + GPS only, NO photo URLs
-- Photos arrive separately via background queue
-- One upload at a time, network-aware, max 5 retries with backoff
-- Local SQLite queue survives app close/crash
-- Compression: 5MB → ~500KB before upload
+5. **Background GPS null lat/lng:** The background task can lose driver context. Milestone one-shot GPS always works. Background continuous tracking may send null positions — check `driver_positions` table for nulls.
 
 ---
 
-## 7. Build and Deploy
+## 9. Build and Deploy
 
 ```bash
 cd c:\expo\fleetcraft-driver
 eas build --platform android --profile preview
 ```
 
-Latest working APK: commit `9d5455c`
+- EAS account: `sireenmalik`
+- `EXPO_PUBLIC_FLEET_API_URL` baked in via `eas.json`
+- APK download link provided after build completes (5-10 min)
+- Install APK on test phone, login with test driver credentials
+
+### Local build alternative (faster, no EAS quota):
+```cmd
+cd C:\expo\fleetcraft-driver\android
+set JAVA_HOME=C:\Program Files\Eclipse Adoptium\jdk-17.0.18.8-hotspot
+gradlew.bat assembleRelease
+```
+APK at: `android\app\build\outputs\apk\release\app-release.apk`
+
+---
+
+## 10. Fleet API Driver Endpoints
+
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| POST | `/api/auth/driver-login` | PIN-based auth, returns JWT |
+| GET | `/api/driver/me` | Driver profile |
+| PUT | `/api/driver/me` | Update profile, push token |
+| GET | `/api/driver/loads` | Assigned loads (pending + active) |
+| GET | `/api/driver/loads/:id` | Single load with full details |
+| POST | `/api/driver/loads/:id/milestone` | Advance milestone with GPS + photos |
+| POST | `/api/driver/photos/upload` | Upload photo to DO Spaces |
+| POST | `/api/driver/positions` | Batch GPS position upload |
+| GET | `/api/geofences/terminal/:code` | Get geofence coordinates for terminal |
+
+All driver endpoints require JWT auth (`Authorization: Bearer <token>`).
+All endpoints filter by `org_id` from the JWT payload.
