@@ -426,6 +426,9 @@ When a container is already at the terminal, dispatchers can skip FTU entirely:
 
 **Auto-archive trigger: `dispatches.completed_at` + 24 hours. NOT FTU completed flag.**
 
+### Geofence Embedding in Dispatches
+Dispatch creation embeds geofences from the `geofences` table into `pickup_geofences` JSONB column. The driver app reads this at load time and arms on-device detection via `useGpsTracking.ts`. If `pickup_geofences` is empty `[]`, on-device detection silently does nothing.
+
 ### terminal_code Resolution
 The quick-add endpoint derives `terminal_code` from `terminal_name` using a mapping table (e.g., "PCT Tacoma" → "PCT", "Husky Terminal" → "HUSKY"). This is critical because dispatch creation embeds geofences by looking up `terminal_code`. Without `terminal_code`, `pickup_geofences` will be empty `[]`.
 
@@ -433,6 +436,8 @@ Dispatch geofence lookup has three fallbacks:
 1. `terminal_code` from request body
 2. `container.terminal_code` or `container.moored_terminal_code`
 3. `container.terminal_name` matched against geofences table
+
+If all three fail, `pickup_geofences = []` and on-device detection will not fire. Direct-add containers must have `terminal_code` set (derived from `terminal_name` mapping in quick-add endpoint).
 
 ### Orphaned dispatch auto-cancellation
 

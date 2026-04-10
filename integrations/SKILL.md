@@ -93,14 +93,16 @@ server.js webhook handler lines 684-716 currently auto-archive on `completed=tru
 - Geofencing (terminal boundaries, detention tracking)
 - Route matching
 
-### Geofencing architecture: ACTIVE — on-device detection
+### Geofencing architecture: IMPLEMENTED — on-device detection via GPS stream
 - Geofences stored in `geofences` table keyed by `terminal_code`
-- Looked up at dispatch creation, embedded in dispatch payload (`pickup_geofences` JSONB)
-- Evaluation happens ON-DEVICE via the driver app's GPS stream (NOT via HERE Geofencing API, NOT via Android OS geofence engine)
-- Driver app checks haversine distance to corridor endpoints every 15 seconds
-- If within buffer_meters * 2 of either endpoint → fires `terminal_area_arrived` milestone
-- Fire-once per dispatch (geofenceFired flag keyed by dispatch ID)
+- Embedded in dispatch `pickup_geofences` at dispatch creation time (terminal_code lookup)
+- Detection happens ON-DEVICE in the driver app via `useGpsTracking.ts`
+- Pure JavaScript ray casting (polygon) and haversine (corridor) — no HERE SDK needed for detection
+- HERE is used for map tiles and routing only, NOT for geofencing
+- Driver app checks every 15 seconds via foreground `watchPositionAsync`
+- Fire-once per dispatch (geofenceFired flag keyed by `${dispatchId}:${trigger_event}`)
 - 100 trucks each check their own dispatch geofences locally — no server load
+- 25% buffer applied to polygon coordinates in the database for GPS accuracy
 
 ### Terminal geofences configured:
 - **Husky Terminal:** Polygon covering Lot F + adjacent roads (Maxwell Way to E 19th St, Thorne Rd to Port of Tacoma Rd), no buffer (exact boundary)

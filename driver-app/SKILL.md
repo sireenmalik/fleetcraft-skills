@@ -139,9 +139,11 @@ Seven photo capture screens intercept the milestone flow BEFORE milestones fire.
 
 ---
 
-## 6. Geofence Detection — Real-Time On-Device Check
+## 6. Geofence Detection — Real-Time On-Device Check (IMPLEMENTED)
 
-> **CRITICAL:** Geofence detection uses our own GPS stream, NOT the Android OS geofence engine. The OS engine (`startGeofencingAsync`) batches checks with 1-5 minute latency. Our approach checks every 15 seconds via the GPS stream for instant detection.
+> **CRITICAL:** Geofence detection uses our own GPS stream in `useGpsTracking.ts`, NOT the Android OS geofence engine. The OS engine (`startGeofencingAsync`) batches checks with 1-5 minute latency. Our approach checks every 15 seconds via the GPS stream for instant detection.
+
+> **STATUS: FULLY BUILT.** Polygon (ray casting) and corridor (haversine) detection working in production. Deployed in v1.2.0.
 
 ### How it works:
 1. Driver accepts load → app loads `pickup_geofences` from dispatch payload into memory
@@ -183,10 +185,20 @@ WRONG: expo startGeofencingAsync → Android OS batches checks → 1-5 min laten
 RIGHT: our GPS stream every 15s → haversine check → instant detection
 ```
 
+### Critical dependency — pickup_geofences must be populated:
+- `pickup_geofences` must be populated on the dispatch (not empty `[]`)
+- Dispatch creation embeds geofences by looking up `terminal_code` from the `geofences` table
+- If `pickup_geofences` is `[]`, detection silently does nothing — no error, no alert
+- Direct-add containers must have `terminal_code` set (derived from `terminal_name` mapping in quick-add endpoint)
+
+### Dead code warning:
+`DispatchContext.tsx` still contains old OS geofencing code (`Location.startGeofencingAsync`, `registerGeofences`, `deregisterGeofences`, `pendingGeofenceTriggers`). This is **DEAD CODE**. The real detection is in `useGpsTracking.ts`. Remove the dead code when convenient — do NOT reactivate it.
+
 ### Server side (Fleet API):
 - `terminal_area_arrived` milestone handler sets `dispatches.queue_start_at` WHERE `queue_start_at IS NULL`
 - Idempotent — second fire does not overwrite the first timestamp
 - Event logged to `container_events` with `auto_triggered: true`
+- Server accepts `occurred_at`, `auto_triggered`, `triggered_by` from driver app
 
 ---
 
