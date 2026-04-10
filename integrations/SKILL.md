@@ -35,9 +35,11 @@ description: >
 ```javascript
 headers: {
   'Content-Type': 'application/json',
-  'x-api-key': process.env.FTU_API_KEY
+  'X-Authorization-ApiKey': process.env.FTU_API_KEY
 }
 ```
+
+> **LESSON LEARNED:** The FTU auth header is `X-Authorization-ApiKey`, NOT `x-api-key`. Using the wrong header causes silent auth rejection — FTU returns 201 with "API key is not set" instead of an error code. This was misdiagnosed as a key expiry when it was actually a wrong header name. Fixed April 2026.
 
 ### T49 (Terminal 49): DEACTIVATED
 Never reference `t49-container-tracker.js`, T49 API keys, or T49 endpoints. All T49 code is dead code.
