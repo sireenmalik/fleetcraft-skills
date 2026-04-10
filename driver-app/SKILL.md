@@ -139,19 +139,19 @@ Seven photo capture screens intercept the milestone flow BEFORE milestones fire.
 
 ---
 
-## 6. Geofence Detection — Real-Time On-Device Check (IMPLEMENTED)
+## 6. Geofence Detection — On-Device Polygon Detection (IMPLEMENTED)
 
-> **CRITICAL:** Geofence detection uses our own GPS stream in `useGpsTracking.ts`, NOT the Android OS geofence engine. The OS engine (`startGeofencingAsync`) batches checks with 1-5 minute latency. Our approach checks every 15 seconds via the GPS stream for instant detection.
+> **CRITICAL:** Geofence detection uses `isInsidePolygon()` in `useGpsTracking.ts` — pure ray casting, no OS geofence engine, no HERE SDK. Do NOT use `startGeofencingAsync`.
 
-> **STATUS: FULLY BUILT.** Polygon (ray casting) and corridor (haversine) detection working in production. Deployed in v1.2.0.
+> **STATUS: FULLY BUILT.** Polygon detection deployed in v1.2.0. All terminals use polygon type.
 
 ### How it works:
 1. Driver accepts load → app loads `pickup_geofences` from dispatch payload into memory
 2. `useGpsTracking` accepts geofences array + `onGeofenceEnter` callback
 3. Foreground `watchPositionAsync` fires every 15 seconds
-4. Each GPS position: if polygon type → ray casting point-in-polygon check; if corridor type → haversine distance to endpoints
-5. If inside polygon OR within `buffer_meters * 2` of corridor endpoint → trigger fires
-6. Trigger fires ONCE per dispatch (`geofenceFired` Set keyed by dispatch ID)
+4. Each GPS position: `isInsidePolygon(lat, lng, vertices)` — ray casting point-in-polygon
+5. If inside polygon → trigger fires
+6. Trigger fires ONCE per dispatch (`geofenceFired` Set keyed by `${dispatchId}:${trigger_event}`)
 7. On fire: calls `POST /api/driver/loads/:id/milestone` with:
    - `milestone: 'terminal_area_arrived'`
    - `auto_triggered: true`
@@ -169,21 +169,14 @@ Seven photo capture screens intercept the milestone flow BEFORE milestones fire.
 - Dispatch is `completed` or `cancelled`
 - `pickup_geofences` is null or empty array
 
-### Geofence sizing:
-| Terminal | Type | buffer_meters | Check radius | Notes |
-|----------|------|--------------|--------------|-------|
-| Husky Terminal | polygon | 0 | exact | Lot F rectangle (Maxwell Way / Thorne Rd / E 19th / Port of Tacoma Rd) |
-| PCT Tacoma | corridor | 25m | 50m | Alexander Ave E corridor |
-| T18 Seattle | corridor | 25m | 50m | Two entry corridors |
-| FCTEST (test) | corridor | 50m | 100m | Home testing needs wider zone |
+### Terminal geofences (all polygon, all exact boundary):
+| Terminal | Notes |
+|----------|-------|
+| Husky Terminal | Lot F rectangle (Maxwell Way / Thorne Rd / E 19th / Port of Tacoma Rd) |
+| PCT Tacoma | Gate booth area polygon (25% expanded for GPS accuracy) |
+| T18 Seattle | Gate booth area polygon (3 geofences: 16th Ave SW, Klickitat Bridge, Gate Booth) |
 
-Polygon geofence uses ray casting algorithm (odd edge crossings = inside). No buffer needed — the polygon boundary IS the detection zone.
-
-### What NOT to do:
-```
-WRONG: expo startGeofencingAsync → Android OS batches checks → 1-5 min latency
-RIGHT: our GPS stream every 15s → haversine check → instant detection
-```
+All polygons use ray casting algorithm (`isInsidePolygon`). The 25% buffer is baked into the polygon vertices — no runtime buffer calculation needed.
 
 ### Critical dependency — pickup_geofences must be populated:
 - `pickup_geofences` must be populated on the dispatch (not empty `[]`)
@@ -191,8 +184,8 @@ RIGHT: our GPS stream every 15s → haversine check → instant detection
 - If `pickup_geofences` is `[]`, detection silently does nothing — no error, no alert
 - Direct-add containers must have `terminal_code` set (derived from `terminal_name` mapping in quick-add endpoint)
 
-### Dead code warning:
-`DispatchContext.tsx` still contains old OS geofencing code (`Location.startGeofencingAsync`, `registerGeofences`, `deregisterGeofences`, `pendingGeofenceTriggers`). This is **DEAD CODE**. The real detection is in `useGpsTracking.ts`. Remove the dead code when convenient — do NOT reactivate it.
+### Dead code removed:
+Old OS geofencing code (`startGeofencingAsync`, `registerGeofences`, `pendingGeofenceTriggers`) was removed from `DispatchContext.tsx`. All detection is in `useGpsTracking.ts`.
 
 ### Server side (Fleet API):
 - `terminal_area_arrived` milestone handler sets `dispatches.queue_start_at` WHERE `queue_start_at IS NULL`

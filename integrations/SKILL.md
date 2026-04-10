@@ -93,29 +93,25 @@ server.js webhook handler lines 684-716 currently auto-archive on `completed=tru
 - Geofencing (terminal boundaries, detention tracking)
 - Route matching
 
-### Geofencing architecture: IMPLEMENTED — on-device detection via GPS stream
+### Geofencing architecture: IMPLEMENTED — on-device polygon detection
 - Geofences stored in `geofences` table keyed by `terminal_code`
 - Embedded in dispatch `pickup_geofences` at dispatch creation time (terminal_code lookup)
 - Detection happens ON-DEVICE in the driver app via `useGpsTracking.ts`
-- Pure JavaScript ray casting (polygon) and haversine (corridor) — no HERE SDK needed for detection
+- Pure JavaScript ray casting point-in-polygon — no HERE SDK needed for detection
 - HERE is used for map tiles and routing only, NOT for geofencing
 - Driver app checks every 15 seconds via foreground `watchPositionAsync`
 - Fire-once per dispatch (geofenceFired flag keyed by `${dispatchId}:${trigger_event}`)
 - 100 trucks each check their own dispatch geofences locally — no server load
-- 25% buffer applied to polygon coordinates in the database for GPS accuracy
+
+All geofences are polygons. Corridor type has been removed. Detection uses ray casting point-in-polygon. Polygon coordinates include a 25% buffer baked into the vertices for GPS accuracy.
 
 ### Terminal geofences configured:
-- **Husky Terminal:** Polygon covering Lot F + adjacent roads (Maxwell Way to E 19th St, Thorne Rd to Port of Tacoma Rd), no buffer (exact boundary)
-- **PCT Tacoma:** Bidirectional corridor on Alexander Ave E, 25m buffer
-- **T18 Seattle:** Two entry corridors (16th Ave SW + Klickitat Bridge), 25m buffer
-- **FCTEST (test):** Bellevue test corridor, 50m buffer
-
-Geofence types supported:
-- `polygon` — ray casting point-in-polygon (Husky). Exact boundary, buffer_meters = 0.
-- `corridor` — haversine distance to endpoints (PCT, T18). Check radius = buffer_meters * 2.
+- **Husky Terminal:** Polygon covering Lot F + adjacent roads (Maxwell Way to E 19th St, Thorne Rd to Port of Tacoma Rd)
+- **PCT Tacoma:** Polygon covering gate booth area (25% expanded)
+- **T18 Seattle:** Polygon covering gate booth area (3 geofences: 16th Ave SW, Klickitat Bridge, Gate Booth)
 
 ### Detention timing:
-- Queue start: `queue_start_at` — set automatically by corridor geofence fire (idempotent, WHERE NULL)
+- Queue start: `queue_start_at` — set automatically by geofence fire (idempotent, WHERE NULL)
 - Queue stop: `queue_stop_at` — outgate EIR photo timestamp
 - Total queue: `queue_stop_at` minus `queue_start_at`
 - Server-side: Fleet API milestone handler accepts `occurred_at`, `auto_triggered`, `triggered_by` from driver app
