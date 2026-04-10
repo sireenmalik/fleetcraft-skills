@@ -50,6 +50,13 @@ Containers added via `POST /api/containers/quick-add` (`data_source = 'direct'`)
 - No FTU re-registration on restore (guard: `data_source != 'direct'`)
 - FTU quota/billing unaffected — zero API calls for direct-add containers
 
+### FTU Health Monitoring
+- `GET /api/health/ftu` — checks API key validity against FTU `/v1/settings/info`
+- `GET /api/health` — includes `ftu_last_event` timestamp and `ftu_stale` boolean
+- If `ftu_stale = true` (no FTU events in 7 days), the API key may be expired
+- E2E test 8.3 fails loudly when the FTU key is rejected
+- **LESSON LEARNED:** FTU API key expired silently in April 2026. No webhook data arrived for 6+ days. Containers showed "On Ship" with no vessel name, ETA, or terminal. The system had no alert for this condition. This monitoring prevents recurrence.
+
 ### FTU completed flag — DO NOT USE AS ARCHIVE TRIGGER
 FTU sends `completed=true` when it has no more tracking updates. This can happen:
 - After vessel arrival (container still on vessel)
