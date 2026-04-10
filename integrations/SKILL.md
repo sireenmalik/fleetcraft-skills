@@ -93,21 +93,26 @@ server.js webhook handler lines 684-716 currently auto-archive on `completed=tru
 - Geofencing (terminal boundaries, detention tracking)
 - Route matching
 
-### Geofencing architecture (designed, implementation pending):
+### Geofencing architecture: ACTIVE — on-device detection
 - Geofences stored in `geofences` table keyed by `terminal_code`
-- Looked up at dispatch creation, embedded in dispatch payload
-- Registered locally on device via HERE SDK
-- **Evaluation happens ON-DEVICE** — not server-side
-- 100 trucks each check 2-3 geofences, not all geofences globally
+- Looked up at dispatch creation, embedded in dispatch payload (`pickup_geofences` JSONB)
+- Evaluation happens ON-DEVICE via the driver app's GPS stream (NOT via HERE Geofencing API, NOT via Android OS geofence engine)
+- Driver app checks haversine distance to corridor endpoints every 15 seconds
+- If within buffer_meters * 2 of either endpoint → fires `terminal_area_arrived` milestone
+- Fire-once per dispatch (geofenceFired flag keyed by dispatch ID)
+- 100 trucks each check their own dispatch geofences locally — no server load
 
-### Terminal geofences designed:
-- **PCT Tacoma:** Bidirectional corridor on Alexander Ave E, gate polygon at booth
-- **T18 Seattle:** Two entry corridors, gate polygon at booth
+### Terminal geofences configured:
+- **Husky Terminal:** Corridor on approach road, 25m buffer
+- **PCT Tacoma:** Bidirectional corridor on Alexander Ave E, 25m buffer
+- **T18 Seattle:** Two entry corridors (16th Ave SW + Klickitat Bridge), 25m buffer
+- **FCTEST (test):** Bellevue test corridor, 50m buffer
 
 ### Detention timing:
-- Start: ingate photo timestamp
-- Stop: outgate EIR photo timestamp
-- Industry standard — matches how detention is invoiced
+- Queue start: `queue_start_at` — set automatically by corridor geofence fire (idempotent, WHERE NULL)
+- Queue stop: `queue_stop_at` — outgate EIR photo timestamp
+- Total queue: `queue_stop_at` minus `queue_start_at`
+- Server-side: Fleet API milestone handler accepts `occurred_at`, `auto_triggered`, `triggered_by` from driver app
 
 ---
 
