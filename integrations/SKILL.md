@@ -22,8 +22,9 @@ description: >
 ### Webhook handler rules (in server.js):
 1. Validate the payload
 2. Check `archived_containers` — if container exists there, do NOT re-insert
-3. Write to SQLite first (source of truth)
-4. When FTU sends `completed: true`, set `archived_at` in SQLite
+3. Check `container_exclusions` — if tombstone exists, skip and return (prevents archive resurrection)
+4. Write to SQLite first (source of truth) — SQLite upsert has `WHERE user_status IS NULL OR user_status = 'active'` guard
+5. When FTU sends `completed: true`, do NOT auto-archive (see rule below)
 
 ### FTU API endpoints used:
 - `POST /container/tracking` — register new container
