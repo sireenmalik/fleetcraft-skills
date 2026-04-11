@@ -137,6 +137,9 @@ Seven photo capture screens intercept the milestone flow BEFORE milestones fire.
 - Home screen: small 7px dot next to driver name, green if any load in tracking status
 - Tracking enabled during: `en_route_pickup`, `en_route_delivery`, `empty_en_route_return`
 
+**GPS pauses during modals:**
+GPS tracking is disabled when chassis modal is open (`showChassisModal`). This prevents re-renders from bouncing the Android keyboard. GPS resumes immediately when the modal closes. Geofence detection also pauses during modals — if the driver enters a geofence while typing a chassis number, it will fire on the next GPS tick after the modal closes.
+
 ### Known GPS bugs (fixed April 2026):
 - accuracy/speed/heading were sent by app but dropped by server INSERT (fixed: server now inserts all 9 columns)
 - Batch upload duplicated positions 5-6x due to missing concurrency lock on flush (fixed: `flushing` ref lock)
@@ -241,6 +244,8 @@ Terminal areas and rural delivery locations often have poor cellular coverage. T
 5. **Background GPS null lat/lng:** The background task can lose driver context. Milestone one-shot GPS always works. Background continuous tracking may send null positions — check `driver_positions` table for nulls.
 
 6. **GPS position duplicates:** The batch flush had no concurrency lock. If flush took longer than 30 seconds (slow network), the next interval fired and uploaded the same batch again. Fixed with a `flushing` ref lock in `useGpsTracking.ts`.
+
+7. **Chassis modal keyboard bounce (Android):** GPS tracking and context polling cause component re-renders every 10-15 seconds. On Android, re-renders while a Modal with TextInput is open cause the keyboard to scroll up and down. Fixed by pausing GPS when any modal is open: `gpsEnabled = isTrackingStatus && !showChassisModal`. If keyboard bounce persists, extract the modal into a React.memo component to isolate it from parent re-renders.
 
 ---
 
