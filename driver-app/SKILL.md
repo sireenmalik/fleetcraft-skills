@@ -137,6 +137,20 @@ Seven photo capture screens intercept the milestone flow BEFORE milestones fire.
 - Home screen: small 7px dot next to driver name, green if any load in tracking status
 - Tracking enabled during: `en_route_pickup`, `en_route_delivery`, `empty_en_route_return`
 
+### Known GPS bugs (fixed April 2026):
+- accuracy/speed/heading were sent by app but dropped by server INSERT (fixed: server now inserts all 9 columns)
+- Batch upload duplicated positions 5-6x due to missing concurrency lock on flush (fixed: `flushing` ref lock)
+- Geofence detection had no accuracy gate — garbage GPS readings could miss or false-trigger polygons (fixed: skip if accuracy > 100m)
+
+### GPS data fields captured:
+| Field | Source | Notes |
+|-------|--------|-------|
+| lat, lng | coords.latitude/longitude | Always present |
+| accuracy | coords.accuracy | Meters. Null on old builds. 5-15m normal, >100m = skip geofence |
+| speed | coords.speed | m/s. Null when stationary |
+| heading | coords.heading | Degrees. Null when stationary |
+| dispatch_id | from active load | Links position to specific dispatch |
+
 ---
 
 ## 6. Geofence Detection — On-Device Polygon Detection (IMPLEMENTED)
@@ -224,6 +238,8 @@ Terminal areas and rural delivery locations often have poor cellular coverage. T
 4. **Photo upload 413 error:** Nginx must have `client_max_body_size 20M`. Without this, uploads over 1MB are rejected by nginx before reaching Express. Express/multer limit is 10MB.
 
 5. **Background GPS null lat/lng:** The background task can lose driver context. Milestone one-shot GPS always works. Background continuous tracking may send null positions — check `driver_positions` table for nulls.
+
+6. **GPS position duplicates:** The batch flush had no concurrency lock. If flush took longer than 30 seconds (slow network), the next interval fired and uploaded the same batch again. Fixed with a `flushing` ref lock in `useGpsTracking.ts`.
 
 ---
 
