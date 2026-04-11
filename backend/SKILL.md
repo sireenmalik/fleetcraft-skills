@@ -239,6 +239,13 @@ The `terminal_area_arrived` event is the only auto-triggered milestone. It follo
 - **Idempotency:** Second fire does NOT overwrite — the WHERE NULL guard is the server-side backstop
 - **Timestamp:** Uses client-provided `occurred_at` via `COALESCE($1::timestamptz, now())`
 
+### Queue Time Calculation
+Queue time is DERIVED, never tapped by the driver.
+- **Primary source:** `dispatches.queue_start_at` (geofence polygon entry, auto-triggered) to `dispatches.queue_stop_at` (outgate EIR photo)
+- **Fallback source:** `dispatches.terminal_ingate_at` (Ingate milestone tap) to `dispatches.pickup_completed_at` (Gate Out milestone tap)
+- `in_queue` status exists in the CHECK constraint for backwards compatibility but is never set by the current driver app
+- The driver milestone flow is: `chassis_info` → `at_terminal` (Ingate) → `container_loaded` → `gate_out`
+
 ---
 
 ## 6. PM2 Workers — Current State

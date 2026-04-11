@@ -58,14 +58,20 @@ at_return_terminal → chassis_returned → returned → completed
 (cancelled can happen from any status)
 ```
 
-### Milestone flow the driver walks through:
+### Milestone flow the driver walks through (15 tappable steps):
 
 ```
-en_route_pickup → chassis_info → at_terminal → in_queue →
-gate_out → in_transit_parked → en_route_delivery → delivered →
+en_route_pickup → chassis_info → at_terminal (Ingate) →
+container_loaded → gate_out → in_transit_parked → en_route_delivery →
+at_delivery → pod_captured → delivered →
 empty_en_route_return → in_transit_parked_return →
 at_return_terminal → chassis_returned → completed
 ```
+
+`in_queue` is NOT a tappable milestone. Queue time is calculated:
+- Primary: `queue_start_at` (geofence fire) to `queue_stop_at` (outgate EIR photo)
+- Fallback: `terminal_ingate_at` (Ingate tap) to `pickup_completed_at` (Gate Out tap)
+- The `in_queue` status exists in the database CHECK constraint for backwards compatibility but is never set by the driver app.
 
 ### Rules:
 - Each milestone tap captures `lat`, `lng`, `occurred_at` — no exceptions
@@ -210,6 +216,11 @@ Old OS geofencing code (`startGeofencingAsync`, `registerGeofences`, `pendingGeo
 - Idempotent — second fire does not overwrite the first timestamp
 - Event logged to `container_events` with `auto_triggered: true`
 - Server accepts `occurred_at`, `auto_triggered`, `triggered_by` from driver app
+
+### Queue time calculation:
+- If geofence fired: `queue_start_at` to `queue_stop_at`
+- If geofence did NOT fire (GPS missed, accuracy gate, offline): fallback to `terminal_ingate_at` to `pickup_completed_at`
+- Queue is NEVER a driver tap. It is always derived from timestamps.
 
 ---
 
