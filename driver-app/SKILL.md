@@ -189,6 +189,7 @@ Seven photo capture screens intercept the milestone flow BEFORE milestones fire.
 | Husky Terminal | Lot F rectangle (Maxwell Way / Thorne Rd / E 19th / Port of Tacoma Rd) |
 | PCT Tacoma | Gate booth area polygon (25% expanded for GPS accuracy) |
 | T18 Seattle | Gate booth area polygon (3 geofences: 16th Ave SW, Klickitat Bridge, Gate Booth) |
+| FCTEST (Bellevue test) | 50m x 50m polygon at test address for bench testing |
 
 All polygons use ray casting algorithm (`isInsidePolygon`). The 25% buffer is baked into the polygon vertices — no runtime buffer calculation needed.
 

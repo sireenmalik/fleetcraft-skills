@@ -119,6 +119,13 @@ All geofences are polygons. Corridor type has been removed. Detection uses ray c
 - **Husky Terminal:** Polygon covering Lot F + adjacent roads (Maxwell Way to E 19th St, Thorne Rd to Port of Tacoma Rd)
 - **PCT Tacoma:** Polygon covering gate booth area (25% expanded)
 - **T18 Seattle:** Polygon covering gate booth area (3 geofences: 16th Ave SW, Klickitat Bridge, Gate Booth)
+- **FCTEST (Bellevue test):** 50m x 50m polygon at 6302 119th Pl SE, Bellevue. For bench testing geofence detection without driving to a real terminal.
+
+### Adding a new terminal geofence:
+1. INSERT into `geofences` table with `terminal_code`, polygon coordinates, `trigger_event = 'terminal_area_arrived'`
+2. Add to `terminalCodeMap` in server.js quick-add endpoint (all name variants)
+3. Add to frontend `TERMINAL_OPTIONS` dropdown in ContainerTracking.tsx
+4. If missing from any step, dispatch creation won't resolve terminal_code and `pickup_geofences` will be empty `[]`
 
 ### Detention timing:
 - Queue start: `queue_start_at` — set automatically by geofence fire (idempotent, WHERE NULL)

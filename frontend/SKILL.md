@@ -175,7 +175,7 @@ The Add Container modal (`AddContainerModal` in `ContainerTracking.tsx`) has a t
 
 ### ON mode (direct-add):
 - Single container number input
-- Terminal dropdown (required): Husky Terminal — Tacoma, PCT — Tacoma, T18 — Seattle
+- Terminal dropdown (required): Husky Terminal — Tacoma, PCT — Tacoma, T18 — Seattle, T5 — Tacoma, FCTEST — Bellevue (Test)
 - Vessel name input (pre-filled "Direct Request", editable)
 - Shipping line input (optional)
 - Info banner: "No FTU charges — container added directly to your active list"
@@ -188,6 +188,7 @@ The Add Container modal (`AddContainerModal` in `ContainerTracking.tsx`) has a t
 - Switching the toggle resets the form
 - Direct-add containers appear immediately in the Active tab with AT_PORT status (yellow badge)
 - Dispatch button appears immediately (`available_for_pickup = true`)
+- Adding a new terminal requires 3 changes: `geofences` table row + `terminalCodeMap` in server.js + `TERMINAL_OPTIONS` in ContainerTracking.tsx
 
 ---
 

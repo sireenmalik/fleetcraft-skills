@@ -442,6 +442,8 @@ Dispatch geofence lookup has three fallbacks:
 
 If all three fail, `pickup_geofences = []` and on-device detection will not fire. Direct-add containers must have `terminal_code` set (derived from `terminal_name` mapping in quick-add endpoint).
 
+**Rule:** `terminalCodeMap` in server.js must include every `terminal_code` that appears in the `geofences` table. If a new terminal is added to geofences, add it to `terminalCodeMap` too — otherwise dispatch creation won't resolve the code and `pickup_geofences` will be empty. Current terminals: HUSKY, PCT, T18, T5, FCTEST.
+
 ### Orphaned dispatch auto-cancellation
 
 When a container's `ui_status` changes to `OUT_FOR_DELIVERY` or `EMPTY_RETURNED` via FTU webhook (not via driver app milestone), check for orphaned dispatches:
