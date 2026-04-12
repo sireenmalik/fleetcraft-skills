@@ -273,3 +273,44 @@ Map behavior:
 Data source: `container_events` with lat/lng, fetched from `GET /api/containers/{cn}/events`
 Map library: Leaflet 1.9.4 from cdnjs (free, no API key)
 Tiles: OpenStreetMap
+
+---
+
+## 11. Fleet Map Component Rules (v1.3.1–v1.3.8 lessons)
+
+### Map viewport rules
+- Initial load: auto-fit ALL trucks + ALL pickup + delivery points with padding.
+- On driver selection: fit truck + pickup + delivery + 320px top padding (for InfoBubble).
+- On poll refresh (every 10s): do NOT re-fit. Track selection in a ref (`fittedForDriverRef`). Only re-fit when `selectedDriverId` changes.
+- User pan/zoom is sacred — never steal it on data refresh.
+
+### Marker scale pattern
+- Default: 20x20 pulsing LED dot with tiny label (`CNTR · J.Smith`, 9px).
+- Selected: 40x40 full badge with name, ETA, heading arrow, route overlay.
+- Only ONE truck expanded at a time. All others stay compact.
+- Pulsing animation only when Live + Moving (no pulse on Stale/Stopped).
+
+### Connection + Motion states (replaces OFFLINE)
+- Connection: Live (green, < 5 min), Stale (amber, 5–30 min), No signal (gray, > 30 min).
+- Motion: Moving (speed > 5 km/h), Stopped.
+- Heading arrow only renders while Moving.
+- Display as two pills in InfoBubble: `[Live] [Stopped]`.
+
+### Fleet map visibility gate
+- Trucks appear on map ONLY when they have an active dispatch (status NOT IN `completed`, `cancelled`, `pending`).
+- No dispatch = no marker. Cancel dispatch = marker disappears within 10s.
+- The fleet map shows containers on trucks, not trucks. A truck without a dispatched container has no business on the map.
+
+### Status-to-color map
+- GREEN: `assigned`, `en_route_pickup`, `chassis_info_required`
+- AMBER: `at_terminal`, `in_queue`, `loaded`, `gate_out`
+- BLUE: `en_route_delivery`, `at_delivery`, `delivered`
+- GRAY: `in_transit_parked`, `in_transit_parked_return`
+- PURPLE: `empty_en_route_return`, `at_return_terminal`, `chassis_returned`, `returned`
+- HIDDEN: `pending`, `completed`, `cancelled`
+
+### HERE Maps in frontend
+- Map tiles load via HERE JS SDK script tags (client-side, no CORS issue).
+- Route polylines fetched via `GET /api/dispatch/route-preview` (server proxy, not direct HERE call).
+- HERE API key hardcoded in frontend for map tiles only — this is intentional (client-side tiles).
+- Polyline decoded using `fromFlexiblePolyline` (HERE flexible polyline format).

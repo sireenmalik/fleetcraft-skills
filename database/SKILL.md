@@ -397,3 +397,27 @@ The map in the container detail panel should only show events and GPS from the C
 
 ### Test data cleanup
 For the permanent test container ALPHA1234: after cancelling a dispatch, also clean up `container_events` and `driver_positions` from the test run so the map shows clean for the next test. This is test-only — production containers keep all events.
+
+---
+
+## NUMERIC/DECIMAL String Coercion (v1.3.5 lesson)
+
+> **Lesson learned:** Postgres NUMERIC columns serialize as strings in JSON responses via the pg driver (e.g. `"47.282000"` instead of `47.282`). This silently breaks any JavaScript arithmetic on the frontend — `"47.28" + 0.1` becomes `"47.280.1"` (string concatenation), not `47.38`.
+
+**Rule:** All lat/lng columns stored as NUMERIC or DECIMAL MUST be cast to `::float` in any SQL query that feeds a JSON API response:
+
+```sql
+-- CORRECT
+SELECT pickup_lat::float, pickup_lng::float, delivery_lat::float, delivery_lng::float FROM dispatches;
+
+-- WRONG — returns strings in JSON
+SELECT pickup_lat, pickup_lng FROM dispatches;
+```
+
+**Frontend defense:** Always `Number()` coerce lat/lng values from API responses before any math:
+
+```javascript
+const lat = Number(driver.lat);  // never raw driver.lat in arithmetic
+```
+
+This applies to every table with NUMERIC coordinates: `dispatches`, `geofences`, `drivers`, `driver_positions`.

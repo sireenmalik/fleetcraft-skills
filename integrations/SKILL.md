@@ -328,3 +328,28 @@ FTU ETA says April 15 (Tacoma arrival) — CORRECT.
 Vessel finished a round, heading away from WA. Container stays at terminal waiting for next rotation.
 FTU knows the next voyage ETA. AIS shows vessel heading to Asia. AIS ETA is meaningless.
 Only FTU ETA is correct here.
+
+---
+
+## HERE API CORS rule (v1.3.5 lesson)
+
+- **NEVER call HERE APIs from the browser.** `router.hereapi.com`, `geocode.search.hereapi.com`, and `fleet.ls.hereapi.com` all block browser-origin CORS requests when using apiKey auth.
+- All HERE API calls MUST go through Fleet API server-side endpoints.
+- Only HERE Map Tiles (loaded via HERE JS SDK `mapsjs-core.js` / `mapsjs-service.js`) work client-side. These are script-tag loaded, not fetch calls.
+- Server-side proxy endpoint: `GET /api/dispatch/route-preview?origin=lat,lng&destination=lat,lng` — no DB writes, returns polyline + distance + duration.
+
+## ETA display rules (v1.3.6 lesson)
+
+- Two ETAs shown per dispatch, not one:
+  - **ETA to terminal:** live during `en_route_pickup`. Shows "Arrived" when `at_terminal`. Shows "Completed" after `gate_out`.
+  - **ETA to delivery:** shows "TBD" until dispatch status >= `gate_out`. Then live ETA from HERE Routing.
+- ETA to delivery cannot be meaningfully calculated until the container is physically with the driver (after gate out). Before that, terminal dwell time is unknown.
+
+## Route overlay rules (v1.3.6 lesson)
+
+- For `en_route_pickup` phase, draw BOTH legs:
+  - Bright dashed blue: truck current position to terminal (live leg)
+  - Faded dotted blue: terminal to delivery address (next hop, stored polyline)
+- For `en_route_delivery` phase, draw ONE leg: truck to delivery.
+- For `empty_en_route_return` phase, draw ONE leg: truck to return terminal.
+- Route destination must change based on dispatch status — not hardcoded to delivery.
