@@ -133,6 +133,55 @@ All geofences are polygons. Corridor type has been removed. Detection uses ray c
 - Total queue: `queue_stop_at` minus `queue_start_at`
 - Server-side: Fleet API milestone handler accepts `occurred_at`, `auto_triggered`, `triggered_by` from driver app
 
+### Fleet Tracking architecture (Spec 0013):
+- GPS source is the **driver app phone**, NOT HERE Tracking service
+- This avoids HERE's "Asset Management" license exclusion from the Base Plan
+- HERE is used ONLY for: map tiles (rendering), routing (truck-legal), geocoding (address→lat/lng)
+- All three are Base Plan eligible at standard transaction rates
+
+### HERE Routing v8 — truck profile:
+```javascript
+// Standard truck profile for all FleetCraft route calculations
+const routeParams = {
+  transportMode: 'truck',
+  'truck[grossWeight]': 36000,   // kg — loaded container truck
+  'truck[height]': 410,          // cm
+  'truck[width]': 255,           // cm
+  'truck[length]': 1650,         // cm
+  return: 'polyline,summary'
+};
+// Base URL: https://router.hereapi.com/v8/routes
+// Auth: apiKey query param from HERE_API_KEY env var
+```
+
+### ETA refresh rules:
+- Worker runs every 5 minutes (`eta-refresh.js`, PM2)
+- Max 10 concurrent HERE API calls (semaphore)
+- Skip if `eta_updated_at` < 4 minutes ago (debounce)
+- Skip if driver hasn't moved since last calc (same `last_position_at`)
+- On 429 (rate limit): log warning, skip dispatch, retry next cycle — do NOT crash
+
+### Route polyline rules:
+- Calculated ONCE at dispatch creation via `POST /api/dispatch/route`
+- Stored in `dispatches.route_polyline` (encoded flexible polyline format)
+- ETA refresh does NOT update the stored polyline
+- Dashboard draws from current driver position to destination, not from origin
+
+### Delivery geofences (per-dispatch, not permanent):
+- Created at dispatch time alongside route calculation
+- 200m radius around delivery lat/lng
+- `dispatch_id` set, `terminal_code` null
+- Soft-deleted (`is_active=false`) when dispatch completes
+- Terminal geofences (shared, permanent) have `terminal_code` set and `dispatch_id` null
+
+### Status-to-color mapping (dashboard truck markers, Spec 0013 §3d):
+- GREEN: `assigned`, `en_route_pickup`, `chassis_info_required`
+- AMBER: `at_terminal`, `in_queue`, `loaded`, `gate_out`
+- BLUE: `en_route_delivery`, `at_delivery`, `delivered`
+- GRAY: `in_transit_parked`, `in_transit_parked_return`
+- PURPLE: `empty_en_route_return`, `at_return_terminal`, `chassis_returned`, `returned`
+- NO MARKER: `pending`, `completed`, `cancelled`
+
 ---
 
 ## 4. Resend — Email
