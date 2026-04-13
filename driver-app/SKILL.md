@@ -121,14 +121,60 @@ Seven photo capture screens intercept the milestone flow BEFORE milestones fire.
 
 ## 5. GPS Tracking
 
+### GPS Architecture — App Root Level (NOT screen level)
+
+**CRITICAL:** `useGpsTracking` and `useEtaPolling` MUST be called at the app
+root (`components/BackgroundServices.tsx`, mounted inside `DispatchProvider`
+in `_layout.tsx`) — **never** inside a screen component like `[id].tsx`.
+
+**Previous bug (April 2026):** GPS hook was inside `[id].tsx` (load detail
+screen). When the driver navigated away, locked the phone, or switched
+apps, React unmounted the screen → cleanup called `stopLocationUpdatesAsync`
+→ the background GPS task died. The milestone tap still worked (one-shot
+foreground `getCurrentPositionAsync`), but the continuous stream stopped.
+Result: 3–4 hour gaps in `driver_positions` with no data — dispatcher sees
+a stale truck LED for the whole shift.
+
+**Current architecture:**
+- `BackgroundServices` lives in `DispatchProvider` subtree at app root
+- `gpsEnabled = loads.some(l => ACTIVE_GPS_STATUSES.includes(l.status))`
+- GPS does NOT stop when the driver navigates between screens
+- GPS ONLY stops when: the driver logs out (AuthProvider unmounts the tree)
+  or `gpsEnabled` goes false (zero active loads)
+- `stopLocationUpdatesAsync` is NEVER called on screen unmount
+- `useEtaPolling` lives in the same `BackgroundServices` for the same reason
+- ETA state is lifted into `DispatchContext` (`eta`, `etaForLoadId`, `setEta`)
+  so the load detail screen can still display it
+
+### ACTIVE_GPS_STATUSES (15 statuses — everything except `completed`/`cancelled`)
+
+```
+en_route_pickup, chassis_info_required, at_terminal, container_loaded,
+loaded, gate_out, in_transit_parked, en_route_delivery, at_delivery,
+pod_captured, delivered, empty_en_route_return, in_transit_parked_return,
+at_return_terminal, chassis_returned
+```
+
+### Battery — non-negotiable operational requirement
+
+Drivers MUST plug in phones during active loads. GPS battery drain is not
+a valid concern for drayage operations. On first app launch after the
+driver has an active load, `BackgroundServices` prompts the driver to
+whitelist FleetCraft from Android Doze/battery-saver via
+`Linking.openSettings()` — one tap to "Unrestricted" battery. Prompt is
+dismissible; the "shown once" flag lives in SecureStore.
+
 ### Hook: `useGpsTracking` in `hooks/useGpsTracking.ts`
 
-**Architecture:**
+**Internal architecture:**
 - Foreground `watchPositionAsync` runs every 15 seconds during active load
 - Positions queued in local SQLite (`gps_queue` table) with `synced` flag
 - Batch upload: flushes queue to `POST /api/driver/positions` every 30 seconds
 - Background task: `TaskManager.defineTask('FLEETCRAFT_GPS')` for OS-level tracking
 - Old synced records cleaned up after 24 hours
+- `dispatch_id` tag published to SecureStore at `activeDispatchId` key so
+  the module-level TaskManager callback can read it (React closures don't
+  reach that far)
 
 **GPS collection intervals:**
 | Driver State | Interval | Rationale |
@@ -278,6 +324,10 @@ Terminal areas and rural delivery locations often have poor cellular coverage. T
 6. **GPS position duplicates:** The batch flush had no concurrency lock. If flush took longer than 30 seconds (slow network), the next interval fired and uploaded the same batch again. Fixed with a `flushing` ref lock in `useGpsTracking.ts`.
 
 7. **Chassis modal keyboard bounce (Android):** GPS tracking and context polling cause component re-renders every 10-15 seconds. On Android, re-renders while a Modal with TextInput is open cause the keyboard to scroll up and down. Fixed by pausing GPS when any modal is open: `gpsEnabled = isTrackingStatus && !showChassisModal`. If keyboard bounce persists, extract the modal into a React.memo component to isolate it from parent re-renders.
+
+8. **GPS stops when driver leaves load screen:** The #1 production GPS bug (April 2026). If `useGpsTracking` is called inside a screen component (`[id].tsx`), React cleanup calls `stopLocationUpdatesAsync` on unmount. GPS dies silently — milestones still work (one-shot `getCurrentPositionAsync`) but continuous tracking stops. Fix: GPS MUST live at app root level (`components/BackgroundServices.tsx`), never inside a screen. This was the root cause of 3–4 hour gaps in `driver_positions` traced during the Spec 0013 v2 rollout. Detect with: `SELECT now() - max(recorded_at) FROM driver_positions WHERE driver_id = $1` — if > 5 min with an active dispatch, the phone is silent.
+
+9. **ETA polling stops when driver leaves load screen:** Same root cause as #8. `useEtaPolling` was inside `[id].tsx`. Screen unmount killed the timer. Fix: ETA polling also lives at app root (`BackgroundServices`), ETA state lifted into `DispatchContext`.
 
 ---
 

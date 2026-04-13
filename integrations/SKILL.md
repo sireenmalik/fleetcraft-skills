@@ -182,15 +182,22 @@ const routeParams = {
 - PURPLE: `empty_en_route_return`, `at_return_terminal`, `chassis_returned`, `returned`
 - NO MARKER: `pending`, `completed`, `cancelled`
 
-### HERE Routing for live ETA (Spec 0013, not yet built)
-- Endpoint: `GET /v8/routes` with `return=summary,polyline,typicalDuration`
-- Origin: driver GPS lat/lng
-- Destination: `terminals.address` (text, not lat/lng — HERE geocodes internally)
-- Response includes: `duration` (with traffic), `baseDuration` (no traffic), `polyline`
-- Congestion delay = `duration - baseDuration`
-- Called with variable interval (10 / 5 / 3 min based on distance to terminal)
-- ~43 calls per 4.5-hour trip, ~43,000 calls/month at 1,000 trips
-- Cost: $22–$43/month on HERE Base Plan
+### HERE Routing for live ETA — DEPLOYED (Spec 0013 v2)
+- **Endpoint:** `GET /api/dispatches/:id/eta?origin_lat=X&origin_lng=Y` (server-side proxy, no CORS)
+- **Internals:** calls HERE Routing v8 with truck profile, `return=summary,polyline,typicalDuration`.
+  Destination is `terminals.lat/lng` (primary) or `hereGeocode(terminals.address)` fallback —
+  HERE Routing v8 requires coordinates, not free-text addresses.
+- **Response:** `{ eta_minutes, base_minutes, congestion_minutes, distance_km, polyline, updated_at }`
+- **Writes to `dispatches`:** `eta_predicted_minutes`, `eta_base_minutes`, `eta_traffic_minutes`,
+  `eta_congestion_minutes`, `eta_predicted_at`, and **`eta_first_predicted_minutes` on the first
+  call per dispatch** (detention baseline — compare against `actual_trip_minutes` for
+  third-party congestion proof).
+- **Driver app polling (via `useEtaPolling` in `BackgroundServices`):** variable interval keyed
+  to the last-known ETA — `> 30 min`: every 10 min, `10–30 min`: every 5 min, `< 10 min`: every
+  3 min. Only polls while a load is in `en_route_pickup` or `chassis_info_required`.
+- **Congestion delay = `duration - baseDuration`** from the HERE response.
+- **Cost:** ~43 calls per 4.5-hour trip, ~43,000 calls/month at 1,000 trips, $22–$43/month on
+  HERE Base Plan.
 
 ---
 
