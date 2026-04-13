@@ -340,6 +340,59 @@ Existing related endpoints already in place (listed for completeness):
 
 **Soft-delete rationale:** chassis, drivers, trucks are referenced by dispatches and chassis_assignments. Hard DELETE would either cascade (dangerous) or error on FK. Setting `is_active = false` preserves history while removing the row from all UI queries (which filter on `is_active = true`).
 
+### Terminal Address → Coordinates Pipeline (April 2026 — commit `37ad6df`)
+
+HERE Routing v8 only accepts `lat,lng` — it will NOT resolve a free-text address. Addresses are a human input; coordinates are the machine truth. We convert once via HERE Geocoding and store the result; every downstream API call uses the stored coordinates.
+
+| HERE API | Input | Output | When called |
+|----------|-------|--------|-------------|
+| **Geocoding** (`geocode.search.hereapi.com/v1/geocode`) | Free-text address | `{ lat, lng, label }` | **Once**, at terminal create/update or delivery address entry |
+| **Routing** (`router.hereapi.com/v8/routes`) | `origin=lat,lng` + `destination=lat,lng` | polyline, summary (duration / baseDuration / length) | **Many times** — every ETA poll, route preview, dispatch route compute |
+
+**Auto-geocode fires in two places** (both added in `37ad6df`):
+
+1. `POST /api/terminals` — new terminal with non-null address and no explicit `lat/lng` → `hereGeocode(address)` → stored
+2. `PATCH /api/terminals/:id` — address changed without explicit `lat/lng` → `hereGeocode(address)` → stored → `propagateTerminalCoordsToDispatches(terminal_code)` fans out to every active dispatch
+
+**`hereGeocode()` call sites in `server.js`** (4 total):
+
+1. `POST /api/terminals` — new terminal address → coords
+2. `PATCH /api/terminals/:id` — address change → coords
+3. `POST /api/dispatches` setImmediate — `delivery_address` → coords (customer delivery — free-text input)
+4. `GET /api/dispatches/:id/eta` — fallback only if `terminals.lat/lng` is null (should never fire in practice now)
+
+**Error handling:** all four sites treat geocoding as best-effort. If HERE returns no match or throws, we log a warning and save the row WITHOUT coordinates; the address text still persists. This prevents HERE outages from blocking terminal edits.
+
+**RULE:** Address is human input. Lat/lng is machine truth. Once geocoded, all routing/ETA/distance uses coordinates only. **Zero address strings are ever sent to HERE Routing.**
+
+### Dynamic vs Frozen Updates on Active Dispatches
+
+Not every change flows through to an in-flight dispatch. The table below spells out what propagates and what's snapshotted at creation time:
+
+| Change | Affects active dispatches? | Mechanism | Latency |
+|--------|-----------------------------|-----------|---------|
+| Terminal `address` edit | ✅ YES | Auto-geocode + `propagateTerminalCoordsToDispatches()` | < 10s (one API call) |
+| Terminal `lat`/`lng` direct edit | ✅ YES | Same propagation path | < 10s |
+| Geofence polygon redraw (`PUT /api/geofences/:id`) | ❌ NO — frozen | `dispatches.pickup_geofences` embedded as JSONB snapshot at dispatch creation | Only new dispatches see it |
+| Delivery address edit | ✅ YES | `PATCH /api/dispatches/:id` direct write | Immediate |
+| HERE live ETA refresh | ✅ YES | Endpoint re-reads `terminals.lat/lng` on each call | 3-10 min (driver-app cadence) |
+| `dispatches.route_polyline` (pickup→delivery leg) | ❌ NO — frozen | Computed once via `computeAndStoreRoute()` at dispatch creation | Only new dispatches see it |
+| `dispatches.origin_lat/lng` | ❌ NO — frozen | Captured from driver GPS at "En Route" tap | Never changes post-tap |
+
+**Why geofences are frozen:** detention evidence must be deterministic. If a polygon changed mid-shift, `terminal_area_arrived` would fire at a different physical location than where the trip started, breaking queue/detention timers. Freezing at creation keeps the contract: "this dispatch entered THIS polygon at THIS time, immutable."
+
+**Why stored route polyline is frozen:** low impact. The pickup-phase "bright blue" current-leg line on the fleet map is redrawn every 10 s via `GET /api/dispatch/route-preview` from the truck's live GPS, so the driver-facing route always reflects reality. The stored polyline is only used for the faded "next hop" preview (terminal → delivery) — slightly off if delivery or terminal coords changed, but never blocks the trip.
+
+### Error Pattern #17: Terminal address changed but route still goes to old location
+
+**Symptom:** dispatcher edits a terminal's address in the Terminal modal. The dashboard shows the new address on the dispatch card, but the fleet map still routes the truck to the old gate. Driver follows the line and ends up at the wrong place.
+
+**Root cause (pre-fix):** `PATCH /api/terminals/:id` updated the `address` text field but didn't re-geocode `lat/lng`. HERE Routing uses coords, so it kept routing to the old point. Active dispatches had their `pickup_lat/lng` snapshot from creation time — also stale.
+
+**Fix (commit `37ad6df`):** auto-geocode fires on every address change, result is stored on `terminals`, then `propagateTerminalCoordsToDispatches()` updates every active dispatch's `pickup_lat/lng/pickup_address` in the same transaction. One API call fixes everything downstream within a polling cycle (~10 s). No manual SQL, no dispatch delete/recreate needed.
+
+**Incident:** April 2026 — HUSKY terminal address was changed from `1101 Port of Tacoma Rd` to `2325 Lincoln Ave` on the dashboard. Coordinates stayed at the old location (`47.2642, -122.4082`). New HUSKY dispatches were being routed ~740 m away from where the driver thought they were going. Diagnosed by comparing `hereGeocode()` output for both addresses against the stored `terminals.lat/lng`.
+
 ---
 
 ## 9. Vessel Tracking & vwc-sync Rules

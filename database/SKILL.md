@@ -83,6 +83,34 @@ Before upserting, container-sync.js loads `container_exclusions` into a Set and 
 
 ---
 
+## 2a. Terminal Coordinates Lifecycle (April 2026)
+
+Terminals carry both a human-readable `address` and machine coordinates `lat/lng`. The two are kept in sync automatically so HERE Routing (which requires coordinates) and the dispatcher UI (which shows the address) never drift apart.
+
+- `terminals.address` — human-readable, editable via the Geofence Dashboard Terminal modal.
+- `terminals.lat` / `terminals.lng` — geocoded from `address` via HERE Geocoding, auto-updated on address change (commit `37ad6df`).
+- **On address change:** `PATCH /api/terminals/:id` calls `hereGeocode(address)`, writes the new coords, then calls `propagateTerminalCoordsToDispatches()` which fans the new `{lat, lng, address}` out to every active dispatch with that `terminal_code`.
+- **On direct lat/lng edit:** same propagation path fires (coords_changed trigger).
+- **On terminal create:** same auto-geocode runs if caller supplied an address but no coords.
+
+### Dispatch-side coordinate columns
+
+Related columns on `dispatches` have different lifetimes. Key the design:
+
+| Column | Kind | Behaviour |
+|--------|------|-----------|
+| `pickup_lat` / `pickup_lng` | LIVE | Propagated from `terminals.lat/lng` whenever the terminal's coords change (active dispatches only) |
+| `pickup_address` | LIVE | Propagated alongside coords — stays in sync with `terminals.address` |
+| `pickup_geofences` (JSONB) | FROZEN | Snapshot of the geofence polygon(s) at dispatch creation time. Later polygon edits do NOT affect existing dispatches. Intentional — detention timers must be deterministic |
+| `origin_lat` / `origin_lng` | FROZEN | Captured from driver phone GPS at the moment of the "En Route to Pickup" tap (migration 014). Never changes post-tap. Anchors the detention evidence chain |
+| `route_polyline` | FROZEN | Computed once via `computeAndStoreRoute()` at dispatch creation. Redrawn live only for the bright-blue current-leg line via `/api/dispatch/route-preview` |
+| `delivery_lat` / `delivery_lng` | LIVE via direct PATCH | Set by `hereGeocode(delivery_address)` at creation; editable later via `PATCH /api/dispatches/:id` |
+| `eta_predicted_minutes` + siblings | LIVE | Re-read from HERE on every ETA polling call (3–10 min); no propagation needed |
+
+**Why the split:** anything driver-observable at trip start (pickup address, geofence shape, origin, base route) freezes so the detention contract is stable. Anything that's just routing metadata (current coords, delivery destination, ETA) stays live so corrections propagate.
+
+---
+
 ## 3. ui_status Values
 
 These are FTU-derived. Do not invent new values.

@@ -182,6 +182,20 @@ const routeParams = {
 - PURPLE: `empty_en_route_return`, `at_return_terminal`, `chassis_returned`, `returned`
 - NO MARKER: `pending`, `completed`, `cancelled`
 
+### HERE Geocoding API (one-time address → coordinates)
+
+- **Endpoint:** `https://geocode.search.hereapi.com/v1/geocode?q=<free-text>&apiKey=<KEY>`
+- **Input:** a single free-text address string (e.g. `"2325 Lincoln Ave, Tacoma, WA 98421"`)
+- **Output:** `{ items: [{ position: { lat, lng }, address: { label } }, ...] }` — first item is the best match
+- **Purpose:** **one-time** conversion of a human-typed address into coordinates that HERE Routing can consume. Routing v8 rejects text input; all routing destinations must be `lat,lng`.
+- **Call sites in `server.js`** (via the `hereGeocode(address)` helper at the same name):
+  1. `POST /api/terminals` — new terminal address → stored in `terminals.lat/lng`
+  2. `PATCH /api/terminals/:id` — address change → re-geocoded and propagated to active dispatches (auto-added commit `37ad6df`)
+  3. `POST /api/dispatches` setImmediate — customer `delivery_address` → stored in `dispatches.delivery_lat/lng`
+  4. `GET /api/dispatches/:id/eta` — null-coord fallback only (defensive)
+- **NEVER called at routing time.** Once an address is geocoded, every routing / ETA / distance / polyline call uses the stored coordinates directly. This caps geocode volume to "one call per terminal edit" rather than "one call per ETA poll."
+- **Error handling:** best-effort. If HERE returns no match or throws, the address still saves — coordinates are left null and the caller logs a warning.
+
 ### HERE Routing for live ETA — DEPLOYED (Spec 0013 v2)
 - **Endpoint:** `GET /api/dispatches/:id/eta?origin_lat=X&origin_lng=Y` (server-side proxy, no CORS)
 - **Internals:** calls HERE Routing v8 with truck profile, `return=summary,polyline,typicalDuration`.

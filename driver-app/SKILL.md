@@ -206,6 +206,13 @@ GPS tracking is disabled when chassis modal is open (`showChassisModal`). This p
 | heading | coords.heading | Degrees. Null when stationary |
 | dispatch_id | from active load | Links position to specific dispatch |
 
+### Dispatch origin coordinates (`dispatches.origin_lat/lng`)
+
+- Captured from the driver's phone GPS at the **"En Route to Pickup"** tap (milestone flow in `[id].tsx` → `advanceMilestone()`; migration 014 added the columns).
+- Stored on the dispatch row. **Never changes after capture** — this is the anchor of the detention evidence chain: `origin → pickup_arrived_at` is the baseline trip time that HERE's predicted ETA at the same moment is compared against.
+- **Each dispatch has its own independent origin.** If the same driver accepts two dispatches at different times/locations, each carries its own origin. Routes are always calculated per-dispatch; origins are never shared across dispatches even if driver/truck identical.
+- Frozen by design — the whole detention model depends on "where did this specific trip start" being an immutable fact, not a moving target.
+
 ### GPS is ALWAYS ON during active dispatch (Spec 0013 v2)
 
 `ACTIVE_GPS_STATUSES` includes all statuses from `en_route_pickup` through
