@@ -546,3 +546,32 @@ When Claude creates or modifies any backend file, it MUST include or update this
   1. `terminals.lat/lng` where `terminal_code` matches.
   2. Centroid of `geofences.coordinates` (approximate — warn in logs so operator sets a precise terminal lat/lng).
   3. Leave null; auto-route skips.
+
+## Dispatch ETA columns (Spec 0013, not yet built)
+
+- `eta_predicted_minutes`: latest HERE ETA with traffic
+- `eta_base_minutes`: HERE ETA without traffic
+- `eta_congestion_minutes`: derived (`eta_traffic_minutes - eta_base_minutes`)
+- `eta_first_predicted_minutes`: baseline at trip start (detention evidence)
+- `actual_trip_minutes`: real elapsed time (detention evidence)
+- `eta_last_updated`: freshness indicator
+
+Migration: adds columns to `dispatches` table via `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`.
+Written by new `GET /api/dispatches/:id/eta` endpoint (server-side HERE Routing proxy).
+
+## Detention dispute evidence chain (Spec 0013)
+
+Nine timestamps / derived values that together constitute defensible detention evidence:
+
+1. `eta_first_predicted_minutes` — what HERE said at trip start
+2. `actual_trip_minutes` — how long it actually took
+3. Difference between 1 and 2 = independent congestion proof (third-party)
+4. `queue_start_at` — geofence polygon entry (on-device ray casting fire-once)
+5. `pickup_arrived_at` — driver ingate tap
+6. `pickup_completed_at` — driver gate-out tap
+7. **Road queue** = `pickup_arrived_at - queue_start_at` (time crawling to gate)
+8. **Terminal dwell** = `pickup_completed_at - pickup_arrived_at` (time inside the yard)
+9. **Total detention** = `pickup_completed_at - queue_start_at`
+
+This chain is the commercial justification for Spec 0013 v2: drayage operators
+bill detention per hour; auditable third-party evidence (HERE) is required for dispute resolution.

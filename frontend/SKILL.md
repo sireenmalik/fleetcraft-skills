@@ -314,3 +314,13 @@ Tiles: OpenStreetMap
 - Route polylines fetched via `GET /api/dispatch/route-preview` (server proxy, not direct HERE call).
 - HERE API key hardcoded in frontend for map tiles only — this is intentional (client-side tiles).
 - Polyline decoded using `fromFlexiblePolyline` (HERE flexible polyline format).
+
+### Breadcrumbs (Spec 0013, not yet built)
+- Query `driver_positions WHERE dispatch_id = X ORDER BY recorded_at`
+- Draw as small green dots on FleetMap over the HERE route polyline
+- Green dots over blue line = completed journey
+- Uncovered blue = remaining journey
+- Truck LED = current live position at the head of the trail
+
+Depends on the SecureStore dispatch_id tagging fix in the driver app —
+without it, positions upload with `dispatch_id = NULL` and breadcrumbs can't be filtered per dispatch.

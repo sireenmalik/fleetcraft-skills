@@ -160,6 +160,27 @@ GPS tracking is disabled when chassis modal is open (`showChassisModal`). This p
 | heading | coords.heading | Degrees. Null when stationary |
 | dispatch_id | from active load | Links position to specific dispatch |
 
+### GPS is ALWAYS ON during active dispatch (Spec 0013 v2)
+
+`ACTIVE_GPS_STATUSES` includes all statuses from `en_route_pickup` through
+`chassis_returned`. GPS only stops at `completed` or `cancelled`.
+Driver must plug in phone. Battery optimization is not a concern for
+drayage operations.
+
+**Reason:** GPS was previously OFF during terminal dwell (`at_terminal`,
+`container_loaded`, `gate_out`). This created a gap in breadcrumb data
+during the most critical detention window. Fixed in Spec 0013.
+
+### Variable ETA polling (Spec 0013, not yet built)
+
+Driver app will call `GET /api/dispatches/:id/eta` with current GPS.
+Interval adjusts based on distance to terminal:
+- `> 30 min` away: every 10 min
+- `10–30 min`: every 5 min
+- `< 10 min`: every 3 min
+
+Uses HERE Routing v8 with `terminals.address` as destination (not lat/lng).
+
 ---
 
 ## 6. Geofence Detection — On-Device Polygon Detection (IMPLEMENTED)

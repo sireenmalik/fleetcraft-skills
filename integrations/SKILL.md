@@ -182,6 +182,16 @@ const routeParams = {
 - PURPLE: `empty_en_route_return`, `at_return_terminal`, `chassis_returned`, `returned`
 - NO MARKER: `pending`, `completed`, `cancelled`
 
+### HERE Routing for live ETA (Spec 0013, not yet built)
+- Endpoint: `GET /v8/routes` with `return=summary,polyline,typicalDuration`
+- Origin: driver GPS lat/lng
+- Destination: `terminals.address` (text, not lat/lng — HERE geocodes internally)
+- Response includes: `duration` (with traffic), `baseDuration` (no traffic), `polyline`
+- Congestion delay = `duration - baseDuration`
+- Called with variable interval (10 / 5 / 3 min based on distance to terminal)
+- ~43 calls per 4.5-hour trip, ~43,000 calls/month at 1,000 trips
+- Cost: $22–$43/month on HERE Base Plan
+
 ---
 
 ## 4. Resend — Email
