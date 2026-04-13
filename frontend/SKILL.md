@@ -224,18 +224,32 @@ Also check the frontend mapper — if `fetchDispatchLookup()` or similar functio
 
 ---
 
-## 8. Supabase Is Dead
+## 8. Supabase Fully Purged (April 2026)
 
-No Supabase imports, no Supabase client, no Supabase queries. All data comes from fleet-api.
+**Zero Supabase references remain in live code.** Commit `d9840ab` removed 5,694 lines across 39 files. All frontend components now read/write exclusively via Fleet API (`api.myfleetcraft.com`). Bundle size dropped ~230 KB. The only remaining grep hits are `//` comments documenting the migration — historical context, not executing code.
 
-If a component imports from `supabase/client` or uses `supabase.from()`, it **will** read from a different database than what fleet-api writes to — causing FK violations, stale data, and ghost records.
+### Stubbed components (hidden from nav, render "Coming Soon" cards)
+
+These still exist as files but don't touch any backend. Rebuild against Fleet API when needed:
+
+- `src/app/components/fleet/FleetManagement.tsx` — driver/truck/chassis CRUD UI
+- `src/app/components/dispatch/DispatchControlCenter.tsx` — dispatch management UI
+- `src/app/components/vessel/CollectorControlPanel.tsx` — AIS collector admin
+- `src/app/components/vessel/CollectionSettingsPanel.tsx` — collector settings
+
+### Known Fleet API stubs (return empty, UI handles gracefully)
+
+- **NotificationSystem** — no `GET /api/alert-logs` endpoint yet. `fetchData()` returns empty; logs table shows zero entries; subscribers tab is fully functional.
+- **VehicleMap** — `dispatch_routes` polyline overlay is stubbed to `[]` until a `GET /api/dispatch-routes` endpoint exists. All other map features (truck markers, driver positions, milestone dots, breadcrumbs) work.
+
+### RULE — zero tolerance
+
+**No new code may import from Supabase.** Any `getSupabaseClient`, `supabase.from()`, or `@supabase/supabase-js` import is a bug. Every data read and write goes through Fleet API endpoints. If a grep for `supabase` in live code returns anything other than a comment, ship a fix.
 
 All data fetches use:
 ```typescript
 const response = await fetch(`${API_BASE}/api/endpoint`);
 ```
-
-If you find a Supabase import in any component, replace it with a fleet-api fetch call immediately.
 
 ---
 

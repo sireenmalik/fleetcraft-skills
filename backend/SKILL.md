@@ -309,6 +309,37 @@ Fleet API runs on port 3001, served via nginx at `api.myfleetcraft.com`.
 - Every table has `org_id` column
 - Every query includes `WHERE org_id = $1`
 
+### New CRUD endpoints (April 2026 Supabase purge — commit `fcbe2e7`)
+
+These replaced direct frontend Supabase queries during the April 13 purge. The frontend now routes every CRUD through Fleet API — no exceptions. Pattern: all writes go through `allowed` array + dynamic `SET` clause builder (same shape as the pre-existing drivers PUT at line 1114).
+
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| GET | `/api/chassis` | List available chassis (dispatch-creation dropdowns) |
+| GET | `/api/chassis?all=true` | List ALL chassis (admin view / Chassis Tracker) |
+| POST | `/api/chassis` | Create chassis |
+| PUT | `/api/chassis/:id` | Update chassis (partial; uses `allowed` list) |
+| DELETE | `/api/chassis/:id` | Soft-delete (`is_active = false`) — preserves audit history |
+| POST | `/api/drivers` | Create driver |
+| PUT | `/api/drivers/:id` | Update driver |
+| DELETE | `/api/drivers/:id` | Soft-delete (`is_active = false, status = 'off_duty'`) |
+| POST | `/api/trucks` | Create truck |
+| PUT | `/api/trucks/:id` | Update truck |
+| DELETE | `/api/trucks/:id` | Soft-delete |
+
+Existing related endpoints already in place (listed for completeness):
+
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| GET | `/vessels/tracking` | All cargo vessels from `vessels_cache` (drives VesselTracking page) |
+| GET | `/vessels/with-containers` | VWC rows for dashboard vessel status cards |
+| GET | `/containers/vessels` | Container counts grouped by vessel (dashboard "Live Updates" card) |
+| PATCH | `/api/dispatches/:id` | Update dispatch fields (drives EditDispatchModal) |
+| GET | `/api/subscribers` + POST/DELETE | Alert subscribers CRUD |
+| GET | `/api/dispatches/:id/eta` | HERE Routing live ETA (Spec 0013 v2) |
+
+**Soft-delete rationale:** chassis, drivers, trucks are referenced by dispatches and chassis_assignments. Hard DELETE would either cascade (dangerous) or error on FK. Setting `is_active = false` preserves history while removing the row from all UI queries (which filter on `is_active = true`).
+
 ---
 
 ## 9. Vessel Tracking & vwc-sync Rules

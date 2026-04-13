@@ -78,6 +78,15 @@ This is NOT optional. Every fix that doesn't update skills will be rediscovered 
 
 CQRS with Materialized Views — DigitalOcean PostgreSQL is the single source of truth, SQLite is a write buffer for containers, Supabase is FULLY DISCONNECTED.
 
+### Data Architecture (April 2026)
+
+- **ONLY database:** DigitalOcean PostgreSQL (`fleetcraft_db` on the droplet)
+- **ONLY API:** Fleet API (`api.myfleetcraft.com` / `server.js`)
+- **Supabase:** FULLY DISCONNECTED. Zero code references. No read cache, no auth, no direct queries. Purged in commit `d9840ab` (April 13, 2026) — 5,694 lines removed across 39 frontend files.
+- **Frontend:** ALL data via Fleet API `fetch()` calls. No exceptions.
+- **Driver app:** ALL data via Fleet API `fetch()` calls (through `lib/fleetApi.ts` helper).
+- **Sync workers** (container-sync, vwc-sync, ais-collector-v2, eta-refresh): ALL writes to PostgreSQL via `pg` pool. No intermediate caches.
+
 ---
 
 ## When to Load Which Skill
