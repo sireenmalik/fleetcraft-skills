@@ -292,6 +292,42 @@ Tiles: OpenStreetMap
 
 ## 11. Fleet Map Component Rules (v1.3.1–v1.3.8 lessons)
 
+### Map Components inventory
+
+| Component | Tile source | Used by | User-editable | Persists on save | Draggable pin |
+|-----------|-------------|---------|---------------|------------------|---------------|
+| FleetMap | HERE Maps JS (vector) | Fleet dashboard — live truck/route view | NO | NO | NO |
+| VehicleMap | HERE Maps JS (vector) | Vehicle tracking tab | NO | NO | NO |
+| ContainerTracking map | Leaflet (OpenStreetMap) | Container detail modal — milestone timeline | NO | NO | NO |
+| GPS Track Map | Leaflet (OpenStreetMap) | Historical driver positions replay | NO | NO | NO |
+| **Terminal modal map** | **HERE Maps JS (vector)** | **Terminal edit/create modal** | **YES** | **YES** | **YES** |
+
+### Terminal pin-drop map (April 2026 — commit `a7c2f39`)
+
+The Terminal edit/create modal in `GeofenceDashboard.tsx` embeds a HERE Maps instance with a draggable pin for setting the exact gate location.
+
+**Features:**
+- **Road map view** (`layers.vector.normal.map`) at **zoom 14** (~1 km across, enough to see terminal + approach streets).
+- **Draggable pin** — dispatcher drops on the exact gate entrance. `dragend` writes rounded (5-decimal) coords back into `form.lat/lng`.
+- **Expand/collapse button** (top-right of map, `Maximize2`/`Minimize2` icons) toggles height 250 px → 500 px with a 250 ms CSS `height` transition. `map.getViewPort().resize()` fires after the animation so HERE rescales its canvas.
+- **Live lat/lng display** below the map (5-decimal = ~1 m precision).
+- **Manual lat/lng inputs** kept below the map for power users with exact coords.
+- **No Geocode button** — pin-drop is the primary input. Server-side auto-geocode (`POST`/`PATCH /api/terminals`) still resolves the address on save as a fallback when the dispatcher only typed an address.
+
+**Data flow on save:**
+1. Pin `lat/lng` → `PATCH /api/terminals/:id`.
+2. Server writes to `terminals.lat/lng`.
+3. `propagateTerminalCoordsToDispatches()` updates `pickup_lat/lng/pickup_address` on every active dispatch with that `terminal_code` (COALESCE-guarded against null).
+4. `computeAndStoreRoute()` recomputes `dispatches.route_polyline` for each affected dispatch so the fleet-map blue line redraws to the new coords.
+5. Fleet map and driver app pick up new coords within one polling cycle (~10 s).
+
+**Why pin-drop instead of pure geocoding:**
+
+Street addresses don't map precisely to terminal gate locations. A terminal's mail/registration address is often on a different road than where truck drivers actually enter — the gate can be 300–1000 m away. HERE Geocoding returns the address-range midpoint, which lands on the wrong road for industrial yards. The dispatcher knows which gate the trucks use; drop the pin there. This is the fix for the April 2026 HUSKY incident (address changed from `1101 Port of Tacoma Rd` to `2325 Lincoln Ave` but routing kept going to the old coords — see backend Error Pattern #17).
+
+**HERE bootstrap pattern:**
+Same as FleetMap (`ensureHereMapsLoaded`, `loadHereScript`, `loadHereCss` duplicated at top of `GeofenceDashboard.tsx`). If a third call site appears, extract to `src/utils/hereMaps.ts`. HERE API key is hardcoded (client-exposed tile key — same justification as FleetMap).
+
 ### Map viewport rules
 - Initial load: auto-fit ALL trucks + ALL pickup + delivery points with padding.
 - On driver selection: fit truck + pickup + delivery + 320px top padding (for InfoBubble).
