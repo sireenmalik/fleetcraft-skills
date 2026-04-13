@@ -421,3 +421,34 @@ const lat = Number(driver.lat);  // never raw driver.lat in arithmetic
 ```
 
 This applies to every table with NUMERIC coordinates: `dispatches`, `geofences`, `drivers`, `driver_positions`.
+
+---
+
+## Terminal vs Geofence Tables
+
+`terminals` = source of truth for terminal identity, address, gate coordinates.
+`geofences` = pure polygon definitions for on-device queue detection only.
+
+| What | Table | Column |
+|------|-------|--------|
+| Terminal name | terminals | terminal_name |
+| Terminal address | terminals | address |
+| Gate coordinates (for HERE routing) | terminals | lat, lng |
+| Detection polygon (for driver app) | geofences | coordinates (JSONB) |
+| Polygon type | geofences | type (always 'polygon') |
+| Trigger event | geofences | trigger_event |
+
+**DEPRECATED columns in `geofences` — do not read:**
+
+- `terminal_address` → use `terminals.address`
+- `routing_lat` / `routing_lng` → use `terminals.lat` / `terminals.lng`
+- `dispatch_id` → geofences are terminal-level, embedded in dispatch at creation
+
+UNIQUE constraint: `(terminal_code, name)` — prevents duplicate geofence rows (migration 005).
+
+**When creating a new terminal:**
+
+1. Add row to `terminals` table (address, lat/lng for gate).
+2. Add row to `geofences` table (polygon coordinates for detection zone).
+3. Add `terminal_code` to `terminalCodeMap` in `server.js`.
+4. Add terminal to frontend direct-add dropdown.
