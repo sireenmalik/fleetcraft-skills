@@ -534,3 +534,15 @@ Every .js worker file MUST have this header block:
 ```
 
 When Claude creates or modifies any backend file, it MUST include or update this header.
+
+---
+
+## Dispatch creation — coordinate sources
+
+- **Gate coordinates for HERE routing:** READ FROM `terminals.lat` / `terminals.lng` (primary source of truth).
+- **Detection polygon:** READ FROM `geofences.coordinates` → embedded in `dispatches.pickup_geofences` JSONB at creation time.
+- **NEVER** read `routing_lat` / `routing_lng` from `geofences` — deprecated (migration 005).
+- Fallback order in `POST /api/dispatches` setImmediate when `pickup_lat` / `pickup_lng` are missing from the request:
+  1. `terminals.lat/lng` where `terminal_code` matches.
+  2. Centroid of `geofences.coordinates` (approximate — warn in logs so operator sets a precise terminal lat/lng).
+  3. Leave null; auto-route skips.
