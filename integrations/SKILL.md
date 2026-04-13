@@ -267,6 +267,13 @@ AISStream WebSocket → ais-collector-v2 → SQLite vessel_registry
 - Stale cleanup: vessels with zero active containers + no alert flags + updated > 7 days → deleted from cache
 - **Never writes `alerted_*` columns** — dispatcher owns those
 
+### VWC cleanup rules (April 2026)
+
+- **Cleanup MUST run every cycle, even when zero active vessels exist.** Without this, archiving the last active container on a vessel leaves its VWC row permanently orphaned (aggregation produces zero rows → any early-return skips the DELETE step → row never ages out). Fixed in commit `c35c741` — removed the `if (!vesselStats) return` guard before the cleanup step.
+- **Cleanup runs BEFORE any early-return guard in the sync loop.** General rule: guards should only gate work that depends on having fresh input data. Cleanup queries the DB directly — it doesn't need aggregation output.
+- **VWC only contains vessels with at least one active container.** Once every container on a vessel is `user_status != 'active'` (or `archived_at IS NOT NULL`), the VWC row is deleted on the next cycle. Dashboards reading VWC should not expect to see completed/archived vessels.
+- **Stale + alert-free vessels are deleted immediately**, not after 7 days. The 7-day window only applies to vessels with alert flags still set (those need manual attention first before auto-cleanup).
+
 ### MMSI Chicken-and-Egg Problem
 FTU provides vessel IMO but not MMSI. AIS provides MMSI but only if the vessel is in the scan area. Resolution:
 1. FTU webhook provides vessel_name + vessel_imo → stored in containers table

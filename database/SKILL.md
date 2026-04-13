@@ -98,7 +98,20 @@ These are FTU-derived. Do not invent new values.
 Only containers where `ui_status = 'AT_PORT'` AND `user_status = 'active'` are dispatch-ready. Both conditions required.
 
 ### Direct-add containers
-`POST /api/containers/quick-add` sets `ui_status = 'AT_PORT'` on insert. This is valid — the container is physically at the terminal. No new ui_status value is needed.
+
+`POST /api/containers/quick-add` creates containers that are already at the terminal — they bypass FTU vessel tracking entirely. Full default set at INSERT time:
+
+| Column | Value | Rationale |
+|--------|-------|-----------|
+| `data_source` | `'direct'` | Marks origin — skips FTU sync, skips AIS enrichment |
+| `ui_status` | `'AT_PORT'` | Container is physically at the terminal at creation |
+| `user_status` | `'active'` | Eligible for dispatch |
+| `pod_discharged_at` | `NOW()` | Anchors detention calculations; direct-add has no FTU webhook to populate this |
+| `vessel_name` | `'Direct Request'` | Synthetic vessel used for grouping in dashboards; no AIS/FTU enrichment applies |
+| `terminal_code` | caller-supplied | Which terminal the container is at |
+| `available_for_pickup` | `true` | Container is ready for pickup |
+
+Because direct-add skips the normal FTU ingestion path, every timestamp that normally flows in from webhooks must be set synthetically at creation — otherwise downstream calculations (detention days, demurrage thresholds, dwell time) start from null and produce nonsense. The "Direct Request" vessel_name is intentional: it's the single grouping anchor so dashboards can render direct-add containers in vessel-grouped views alongside real vessels (see `/containers/vessels` — no IN_TRANSIT filter, so direct-add vessels show up).
 
 ---
 

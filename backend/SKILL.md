@@ -426,7 +426,26 @@ All 3 API cancel paths (driver reject, dashboard PATCH cancel, dashboard DELETE)
 
 29. **Archive resurrection via FTU webhook SQLite write.** The FTU webhook handler writes to SQLite without checking `container_exclusions`. If a webhook arrives after archive, it re-creates the container in SQLite. container-sync then pushes it back to Postgres (the INSERT path of ON CONFLICT bypasses the user_status guard). Fix: (a) FTU webhook checks `container_exclusions` BEFORE writing to SQLite — if excluded, skip and return. (b) SQLite upsert has `WHERE user_status IS NULL OR user_status = 'active'` guard — archived/dismissed containers bounce off. (c) Archive endpoint verifies completion — force-deletes from both Postgres and SQLite if container is still present after the transaction. **Incident:** April 2026 — HDMU5611750 and TGBU5159346 kept reappearing after archive.
 
-31. **Stats / counts include held or archived containers.** Symptom: dashboard header counts (total, on_ship, delivered, etc.) don't match the active container list shown below. E.g., stats says `total: 10 / on_ship: 3` but the active list has 5 rows. Root cause: the aggregate endpoint filters on `archived_at IS NULL` but forgets `user_status`. `held`, `flagged`, and `dismissed` containers get counted as active. **Rule:** every read endpoint that returns container counts, lists, or aggregates MUST include `AND (user_status IS NULL OR user_status = 'active')` unless it's explicitly the "all statuses" view. Applies to `/containers/stats`, `/api/containers/list`, `/api/fleet/positions` (via dispatch join), and any future aggregate endpoint. **Incident:** April 2026 — `/containers/stats` double-counted 5 held containers (3 stale IN_TRANSIT from an expired FTU key, 2 EMPTY_RETURNED never archived) into the "Active Containers" tile.
+31. **SYSTEMIC RULE — every container read endpoint MUST filter by user_status.** Symptom: dashboard header counts (total, on_ship, delivered, etc.) don't match the active container list shown below — because aggregates count `held`, `flagged`, and `dismissed` rows while the list hides them. **The predicate that MUST appear in every query that counts or lists containers:**
+    ```sql
+    AND (user_status IS NULL OR user_status = 'active')
+    ```
+    Verified endpoints (all must stay this way):
+    | Endpoint | Status |
+    |----------|--------|
+    | `/containers/stats` | ✅ fixed `0dc02a8` |
+    | `/containers/vessels` | ✅ fixed `f0a6782` |
+    | `/api/containers/list` | ✅ already correct |
+    | `/api/fleet/positions` | ✅ already correct (via dispatch join) |
+    | `vwc-sync.js` aggregation | ✅ already correct |
+
+    Any new read endpoint must include this filter. No exceptions unless it's explicitly the "all statuses" admin view. **Incident:** April 2026 — `/containers/stats` double-counted 5 held containers into the "Active Containers" tile; `/containers/vessels` hid the synthetic "Direct Request" vessel because the inner subquery also required `ui_status = 'IN_TRANSIT'` which direct-add containers never are.
+
+32. **VWC ghost vessels after last container archived.** Symptom: "Containers — Live Updates" panel shows a vessel with "1 Unit" but every container on that vessel is archived. Root cause: `vwc-sync.js` early-returns when its aggregation finds zero active vessels, which skips the step-3b cleanup that deletes orphaned VWC rows. Archiving the last active container on a vessel leaves its VWC row permanently stuck. **Fix (commit `c35c741`):** cleanup runs regardless of whether new aggregation produced rows. **Rule:** any cleanup or DELETE logic in a sync loop must execute BEFORE early-return guards, not after them. The guard should only gate work that depends on having fresh input data.
+
+33. **Direct-add containers missing `pod_discharged_at`.** Symptom: Discharged column blank for AT_PORT containers added via the Direct Terminal Pickup flow; detention "days-since-discharge" calculations start from null, producing nonsense. Root cause: `POST /api/containers/quick-add` INSERT never set `pod_discharged_at`. **Fix (commit `5398ef7`):** quick-add now sets `pod_discharged_at = NOW()` at creation. **Rule:** direct-add containers are already physically at the terminal; they need ALL "arrival" timestamps populated at creation time (discharged, last_seen, any other yard-phase anchor). FTU flow has these arrive via webhook — direct-add must synthesize them.
+
+34. **`/containers/vessels` only shows IN_TRANSIT vessels.** Symptom: "Containers — Live Updates" dashboard card shows "No active vessels" even when there are 5 active containers at a terminal. Root cause: the endpoint's inner IN subquery required `ui_status = 'IN_TRANSIT'`, so any vessel whose containers are all AT_PORT (including the synthetic "Direct Request" vessel used by direct-add) got filtered out. **Fix (commit `f0a6782`):** removed the IN_TRANSIT gate — endpoint aggregates ALL active containers grouped by `vessel_name`, and the per-phase breakdown columns (`on_vessel`, `in_yard`, `picked_up`, `empty_returned`) carry the ui_status detail. Same error class as #31 (systemic rule).
 
 ---
 
