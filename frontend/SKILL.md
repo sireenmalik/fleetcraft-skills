@@ -301,6 +301,9 @@ Tiles: OpenStreetMap
 | ContainerTracking map | Leaflet (OpenStreetMap) | Container detail modal — milestone timeline | NO | NO | NO |
 | GPS Track Map | Leaflet (OpenStreetMap) | Historical driver positions replay | NO | NO | NO |
 | **Terminal modal map** | **HERE Maps JS (vector)** | **Terminal edit/create modal** | **YES** | **YES** | **YES** |
+| **Geofence modal map** | **HERE Maps JS (vector)** | **Geofence edit/create modal (polygon/corridor types)** | **YES (polygon)** | **YES** | **NO — vertex markers** |
+
+**"Terminals & Geofences" is the current user-visible label** for the page that hosts both modals. Previously called "Geofence Dashboard"; renamed in commit `6c861f2`. The component, file, and route id (`GeofenceDashboard`, `src/app/components/geofence/GeofenceDashboard.tsx`, tab id `geofenceDashboard`) kept their original identifiers — only display strings changed.
 
 ### Terminal pin-drop map (April 2026 — commit `a7c2f39`)
 
@@ -327,6 +330,24 @@ Street addresses don't map precisely to terminal gate locations. A terminal's ma
 
 **HERE bootstrap pattern:**
 Same as FleetMap (`ensureHereMapsLoaded`, `loadHereScript`, `loadHereCss` duplicated at top of `GeofenceDashboard.tsx`). If a third call site appears, extract to `src/utils/hereMaps.ts`. HERE API key is hardcoded (client-exposed tile key — same justification as FleetMap).
+
+### Geofence polygon editor (April 2026 — commit `c9713cd`)
+
+The Geofence edit/create modal in `GeofenceDashboard.tsx` embeds a second HERE Maps instance with **draggable vertex markers** for reshaping detection polygons. Only renders for `type === 'polygon'` or `type === 'corridor'` — rectangle and circle types keep their existing numeric input forms.
+
+**Features:**
+- **300 px map, expandable to 600 px** via a corner button (same pattern as Terminal modal; 280 ms CSS height transition + `getViewPort().resize()`).
+- **Vector road view** at zoom 14, centred on existing vertices or falling back to parent terminal's `lat/lng`.
+- **Polygon drawn** with green dashed stroke `rgba(29,158,117,0.85)` and 18% fill; corridor renders as a dashed polyline (no ring closure).
+- **Green 18 px vertex markers** at each corner, draggable. HERE `dragstart` disables map pan; `drag` writes screen-to-geo coords; `dragend` rounds to 5 decimals and pushes into `vertices` state. Polygon reshapes live during drag via `setGeometry(new H.geo.Polygon(ls))`.
+- **"+ Add vertex" button** toggles click-to-place mode: cursor → crosshair, a green banner appears, next `tap` on the map appends a new vertex and exits the mode. Dispatcher can then drag it into position.
+- **Remove vertex** via `✕` button in the vertex list below the map. Blocked with a toast when only 3 vertices remain ("Polygon needs at least 3 vertices").
+- **Vertex list** (monospace, scrollable, max-height 120 px) shows each corner as `N. lat, lng` for quick visual audit.
+- **"Raw JSON (advanced)" collapsible** below the list — renders current vertices serialized; editable as a fallback when the editor has no vertices.
+
+**Save wiring** — `buildCoordinates()` in the modal prefers editor vertices over the JSON textarea. For polygons it appends the first vertex at the end (`[...vertices, vertices[0]]`) to close the ring, matching how Postgres stores geofence polygons (first point duplicated at end). For corridors it uses the raw vertex array (polyline, no ring closure). No backend changes — `POST`/`PATCH /api/geofences` already accepts `coordinates` as JSONB.
+
+**Critical context — polygon edits DON'T affect active dispatches.** The `dispatches.pickup_geofences` column is a JSONB snapshot of the polygon at dispatch creation time (Spec 0013 Rule 11). Edits made in this editor only affect **newly-created dispatches**. A mid-shift polygon change never reshapes what an in-flight driver sees — intentional, to keep detention timers deterministic. If you need to force a refresh on active dispatches, you'd need a separate propagation pass (not implemented).
 
 ### Map viewport rules
 - Initial load: auto-fit ALL trucks + ALL pickup + delivery points with padding.
