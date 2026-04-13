@@ -420,14 +420,39 @@ SQLite database files are runtime data, not source code. They must NEVER be trac
 
 ## 12. Deploy Versioning
 
-Every deploy is tagged with a semantic version.
+Every multi-repo release is tagged in git with a date-based version across ALL 6 repos simultaneously.
 
-### Version naming
-Format: `v{major}.{minor}-{feature-slug}`
-- **Major:** breaking or architectural (new tables, workers, irreversible migrations)
-- **Minor:** additive features and fixes (new endpoint, frontend change)
+### Release tagging convention (April 2026+)
 
-Examples: `v1.0-baseline`, `v1.1-direct-terminal-pickup`, `v1.2-push-notifications`, `v2.0-agentic-dispatch`
+**Format:** `v{YYYY.MM.DD}-{feature-name}`
+
+**Example:** `v2026.04.13-dispatch-tracking`
+
+**Rules:**
+- Tag ALL 6 repos at the same version: `fleetcraft-api`, `fleetcraft-ais`, `Fleetcraft` (frontend), `fleetcraft-driver`, `fleetcraft-skills`, `fleetcraft-specs`.
+- Tag **after** a feature ships and passes e2e — not before. The tag records a known-good state.
+- `feature-name` is kebab-case, describes the headline change of that release (the thing you'd put in a PR title).
+- `YYYY.MM.DD` is the release date, not the feature-start date.
+- One release per day maximum. If multiple features ship the same day, use the last/umbrella one's name — the tag points to the combined end-of-day state.
+
+**Command pattern (run in each of the 6 repos):**
+```bash
+git tag v2026.04.13-dispatch-tracking
+git push origin v2026.04.13-dispatch-tracking
+```
+
+**Rollback:** `git reset --hard v2026.04.13-dispatch-tracking` in each repo, then restart services:
+```bash
+# api
+ssh root@178.128.64.97 "cd /opt/fleetcraft-api && git fetch --tags && git reset --hard v2026.04.13-dispatch-tracking && pm2 restart fleet-api"
+# ais (if workers need restart)
+ssh root@178.128.64.97 "cd /opt/fleetcraft-ais && git fetch --tags && git reset --hard v2026.04.13-dispatch-tracking && pm2 restart all"
+# frontend — rebuild from tagged state, then scp dist
+```
+
+### Prior convention (legacy, kept for historical tags)
+
+Earlier tags used `v{major}.{minor}-{feature-slug}` — e.g., `v1.0-baseline`, `v1.2-push-notifications`, `v1.3-fleet-tracking`, `v2.0-agentic-dispatch`. Those existing tags remain valid for rollback; new releases use the date-based format above. Don't delete old tags — they're rollback anchors.
 
 ### Version manifest
 Location: `fleetcraft-api/versions/`
