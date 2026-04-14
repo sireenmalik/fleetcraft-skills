@@ -395,3 +395,42 @@ The Geofence edit/create modal in `GeofenceDashboard.tsx` embeds a second HERE M
 
 Depends on the SecureStore dispatch_id tagging fix in the driver app —
 without it, positions upload with `dispatch_id = NULL` and breadcrumbs can't be filtered per dispatch.
+
+---
+
+## 12. Container Grid — TanStack Table
+
+> **Added:** 2026-04-13 (Spec 0014)
+
+The Container Tracking page uses `@tanstack/react-table` (v8.21+) for the main data table.
+
+### Key files:
+- `src/app/components/container/ContainerGrid.tsx` — TanStack Table with 29 columns across 5 groups + 1 pinned-right
+- `src/app/components/container/ColumnVisibilityMenu.tsx` — gear-icon dropdown for column visibility
+- `src/app/components/container/gridUtils.ts` — shared formatters (`formatUTCDate`, `formatShortDate`, `formatShortDateTime`, `abbreviateTerminal`) + group color map
+- `src/app/hooks/usePersistedColumnState.ts` — localStorage persistence (key `fc-container-grid-columns`)
+
+### Rules:
+- `container` and `status` columns are always pinned LEFT and cannot be hidden
+- `actions` column is always pinned RIGHT and cannot be hidden
+- RETURN group (5 columns) + `en_route` (Delivery En Route) are hidden by default
+- Column widths and visibility persist to localStorage key `fc-container-grid-columns`
+  - Sizing writes debounced 300ms
+  - Visibility writes immediate
+- The hook forces `container`/`status`/`actions` visibility = true on every read — defense-in-depth if localStorage is tampered with
+- Cell text colors follow group color: OCEAN blue #3b82f6, TERMINAL purple #8b5cf6, DISPATCH amber #f59e0b, DELIVERY orange #ea580c, RETURN green #059669
+- Group headers computed from visible columns — colSpan never drifts when columns are hidden
+- Cells use render-props for `status` and `actions`: `renderStatus` wraps `SmartStatusBadge`, `renderActions` holds the per-tab button logic. No duplication of business logic in the grid component.
+
+### When adding a new column:
+1. Add a column def to `buildColumns()` in `ContainerGrid.tsx`
+2. Add its group to `COLUMN_GROUPS` in `gridUtils.ts`
+3. Add its default width to `DEFAULT_COLUMN_SIZING` in `usePersistedColumnState.ts`
+4. Add its default visibility to `DEFAULT_COLUMN_VISIBILITY` in the same file
+5. Add a human label to `COLUMN_LABELS` in `ColumnVisibilityMenu.tsx`
+
+### Critical: column key naming
+The dispatch milestone column keys (`en_route_term`, `chassis_info`, `ingate`, `loaded`, `outgate`, `parked`, `en_route`, `at_deliv`, `pod_field`, `delivered`, `en_route_rtn`, `parked_rtn`, `at_term_rtn`, `chassis_rtn`, `empty_in`) are tied to dispatch field names the driver app writes. DO NOT rename them without a coordinated driver-app + backend migration.
+
+### The old HTML table is gone
+Do not recreate `<table class="responsive-container-table">` or the 27-column `SortableHeader` block. All main-table rendering goes through TanStack Table now. (The archived-containers table still uses the old `useResizableColumns` hook and `SortableHeader` — migrate in a follow-up spec.)
