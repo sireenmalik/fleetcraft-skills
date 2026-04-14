@@ -298,6 +298,61 @@ Old OS geofencing code (`startGeofencingAsync`, `registerGeofences`, `pendingGeo
 
 ---
 
+## 6a. Delivery Geofence — Spec 0015 (deployed 2026-04-14)
+
+On-device circle detection alongside the existing terminal polygon detection. Same `useGpsTracking` hook, same foreground watcher, same fire-once Set — two detection paths share one GPS tick.
+
+### Detection primitives
+- `isInsidePolygon()` — ray casting, for pickup terminal geofences
+- `isInsideCircle()` — haversine distance, **exported** for unit testing — for delivery geofences
+
+### Hook signature (breaking change, 2026-04-14)
+`useGpsTracking` options replaced `geofences` with two typed fields:
+
+```typescript
+{
+  pickupGeofences?: PolygonGeofence[];   // terminal polygons (Spec 0007)
+  deliveryGeofences?: CircleGeofence[];  // delivery circles (Spec 0015)
+  onGeofenceEnter?: (triggerEvent, lat, lng) => void;
+}
+```
+
+One callback serves both — the `triggerEvent` string (`'terminal_area_arrived'` vs `'delivery_area_arrived'`) routes in the consumer.
+
+### BackgroundServices wiring
+- `DELIVERY_PHASES = ['en_route_delivery']` — the delivery geofence is armed ONLY during this status
+- `deliveryLoad = loads.find(l => DELIVERY_PHASES.includes(l.status))` — separate from `pickupLoad`
+- `handleGeofenceEnter` switches on `triggerEvent`:
+  - `terminal_area_arrived` → pickupLoad, alert "Queue timer started"
+  - `delivery_area_arrived` → deliveryLoad, alert "Customer has been notified"
+
+### Detection window
+Armed while `deliveryLoad.status === 'en_route_delivery'`.
+Disarmed when `delivery_arrived_at` is set (either by this geofence or manual `at_delivery` tap).
+The hook's fire-once `geofenceFired` Set keyed by `${dispatchId}:delivery_area_arrived` provides re-fire protection.
+
+### What the geofence does (and does NOT do)
+- **Does:** sets `dispatches.delivery_arrived_at` (idempotent, NULL-guard); fires 'arriving' customer notification (email + SMS when configured); logs `container_events` row.
+- **Does NOT:** advance dispatch status. Driver still manually taps `at_delivery` with photo. Same pattern as terminal geofence (geofence captures WHEN, driver captures WHAT).
+
+### No customer → no geofence fire that matters
+If the dispatch has `customer_id = NULL`, the backend skips creating the geofence row at dispatch creation. `pickup_geofences` / `delivery_geofences` arrive empty to the driver app. The hook iterates zero times. Zero false alarms. This is by design (Spec 0015 Rule 7).
+
+### Circle radius (default 2km, customer-configurable)
+- `customers.delivery_radius_m` default 2000, range 100-10000
+- Copied to `dispatches.delivery_radius_m` at dispatch creation (frozen per Rule 3)
+- Embedded in `dispatches.delivery_geofences` JSONB: `{ type: 'circle', lat, lng, radius_m, trigger_event: 'delivery_area_arrived' }`
+- Driver app reads the JSONB directly — does NOT call `GET /api/geofences/terminal/:code` (which is polygon-only)
+
+### Server wiring (Spec 0015 Phase 1 deployed)
+- `POST /api/driver/loads/:id/milestone` accepts `delivery_area_arrived`, writes `delivery_arrived_at` WHERE NULL, fires 'arriving' notification fire-and-forget
+- `en_route_delivery` milestone fires 'en_route' notification with `eta_minutes` from `dispatches.eta_predicted_minutes`
+- `delivered` milestone fires 'delivered' notification
+
+See backend/SKILL.md + database/SKILL.md for the server side.
+
+---
+
 ## 7. Offline Mode
 
 Terminal areas and rural delivery locations often have poor cellular coverage. The app must function offline with transparent sync on reconnect.
