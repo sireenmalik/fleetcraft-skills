@@ -482,9 +482,77 @@ Nginx must serve `index.html` for the public path. The existing `fleetcraft-fron
 ### When to escalate to a real router
 If you ever need more than 3 distinct public routes, or nested routes with shared layout, or URL-driven modals, migrate to `react-router-dom` (wrap `App` in `BrowserRouter`, convert tab state to routes). Don't build a homegrown router in `main.tsx` beyond a handful of `pathname.match()` branches.
 
+**Note (2026-04-14):** Spec 0016 added a second public route tree — `/portal/*` — and we hit the nested-routing case. Rather than importing `react-router-dom`, the `main.tsx` branch delegates `/portal/*` to a small `PortalApp` component that does its own `pathname` switch over the 5 portal sub-routes. Works cleanly for now; if a third public surface lands, collapse all three into one real router.
+
 ### Public page rules (must hold for every `/track/*`-style route)
 - **No auth wrapper, no sidebar, no dispatcher state.** Page renders as a standalone card at `max-w-[480px]` on a gray background.
 - **Data comes from sanitized endpoints only.** `GET /api/track/:token` must strip driver names, GPS coords, org IDs, and financial fields before responding (backend/SKILL.md enforces this server-side).
 - **Polling instead of WebSockets in v1.** 30-second interval is enough for milestone status updates.
 - **Time zone is Pacific explicitly.** `toLocaleString('en-US', { timeZone: 'America/Los_Angeles' })` — customers should not see raw UTC.
 - **Error copy is generic.** "This tracking link is not valid or has expired." Never reveal whether a token has been seen, is truly expired, or never existed.
+
+---
+
+## 14. Customer Portal — `/portal/*` (Spec 0016 Phase 2, 2026-04-14)
+
+Authenticated customer-facing portal. Magic-link auth, separate from dispatcher auth. Lives in `src/app/pages/portal/` — each page is its own file, shared layout via `PortalLayout`.
+
+### File map
+
+| Path | Purpose |
+|---|---|
+| `src/app/hooks/usePortalAuth.ts` | localStorage JWT hook, key `fc-customer-jwt`, auto-logs-out on expiry |
+| `src/app/pages/portal/PortalApp.tsx` | tiny pathname router — dispatches to the 5 portal pages |
+| `src/app/pages/portal/PortalLogin.tsx` | email input → `POST /api/customer-auth/magic-link` |
+| `src/app/pages/portal/PortalVerify.tsx` | `?token=X` callback → JWT → redirect to `/portal/dashboard` |
+| `src/app/pages/portal/PortalLayout.tsx` | header (logo + name + "via {org}" + logout) + top nav |
+| `src/app/pages/portal/PortalDashboard.tsx` | delivery list, 30 s polling, active + collapsible completed |
+| `src/app/pages/portal/PortalDeliveryDetail.tsx` | milestone timeline + HERE map, 15 s polling |
+| `src/app/pages/portal/PortalPreferences.tsx` | 6 per-trigger toggles (4 email + 2 SMS) |
+
+### Auth lane isolation (don't break this)
+
+- **localStorage key for portal JWT: `fc-customer-jwt`** — distinct from the dispatcher's `fc-auth-token`. Both sessions coexist in the same browser; logging into one does NOT log out of the other. Never share these keys or fall back from one to the other.
+- **JWT role must be `'customer'`** — validated server-side by `requireCustomerRole`. Client decodes the payload for display only (customer name + org name + expiry check).
+- **On expiry, `usePortalAuth` calls `logout()`** which clears localStorage and redirects to `/portal`. Pages that show the layout also redirect via `PortalLayout`'s `useEffect` guard — belt and suspenders against stale state.
+
+### Routing
+
+Main routing decision happens once in `main.tsx` at boot:
+```
+pathname match /track/<hex>  → PublicTrackingPage (Spec 0015)
+pathname starts /portal      → PortalApp (Spec 0016)
+anything else                → dispatcher <App>
+```
+
+`PortalApp.tsx` then runs its own pathname switch over the 5 portal routes. All navigations use `window.location.assign()` for a full reload — the portal tree is tiny and this avoids any `pushState` / `popstate` complexity. Back/forward still works because `PortalApp` listens to `popstate` and re-renders.
+
+### HERE map in PortalDeliveryDetail
+
+Reuses the loader pattern from `VehicleMap.tsx` (not extracted to a shared helper — third call site would be the trigger per §11). Renders three layers:
+
+1. **Route polyline** from `dispatches.route_polyline`, decoded via `H.geo.LineString.fromFlexiblePolyline`, cyan (`#0891b2`), 4 px.
+2. **Delivery geofence circle**, dashed stroke, 8 % fill, centered on `delivery_lat/lng` with `delivery_radius_m` (defaults 2000 m).
+3. **Delivery pin** — single cyan dot at the delivery center.
+
+**No live driver dot in v1** — Spec 0016 Rule 13. Customers don't see the driver's real-time GPS in the portal. If the map fails to load or the delivery isn't geocoded, the detail page still renders with a "Map unavailable" placeholder.
+
+### Polling intervals (from spec Rule 14)
+- Dashboard: **30 s**
+- Delivery detail: **15 s** (more critical as driver approaches)
+- No WebSockets in v1. Polling is fine for this volume.
+
+### Sanitization (enforced server-side)
+
+The backend's `GET /api/portal/deliveries` + `GET /api/portal/deliveries/:id` do NOT return: `driver_id`, `driver_name`, `driver_phone`, `pickup_lat/lng`, `delivery_lat/lng` (oops — detail DOES return delivery lat/lng for the map, that's the one exception), `org_id`, `origin_lat/lng`, financial fields. The frontend doesn't do any additional filtering — if it's in the response, it's considered safe to render.
+
+### Preferences are locked-down
+
+`PortalPreferences` PATCHes only the 6 `pref_*` booleans. Attempting to send `notification_email`, `notification_phone`, `delivery_radius_m`, etc. in that PATCH returns 400 server-side. If a customer wants to change their email/phone/address, the footer instructs them to contact their trucking company.
+
+### When adding a new portal route
+1. Add the page component in `src/app/pages/portal/YourPage.tsx`.
+2. Add a `pathname` match branch in `PortalApp.tsx`.
+3. Wrap it in `<PortalLayout>` if it needs auth + shared chrome; otherwise render raw (like `PortalLogin` / `PortalVerify`).
+4. If you need a new backend endpoint, wire it under `/api/portal/*` and protect with `requireCustomerRole` middleware.
+5. Respect double-scoping: any SQL you write on the backend must include `WHERE customer_id = $1 AND org_id = $2` — never trust frontend-supplied IDs.
