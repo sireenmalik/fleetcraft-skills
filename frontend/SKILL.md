@@ -444,3 +444,47 @@ The Container Tracking page uses `@tanstack/react-table` for the main data table
 **Column keys are a contract:** Column IDs match dispatch field names written by the driver app (en_route_term, chassis_info, ingate, loaded, outgate, etc.). Visual order can change freely. Column keys cannot be renamed without a coordinated driver-app + backend migration. Renaming an ID silently drops a user's saved customization.
 
 **Build vs deploy:** `npm run build` creates `dist/` locally. The droplet serves the previous bundle until `scp` overwrites it. Before debugging styling complaints, verify the console hash matches the latest local build.
+
+---
+
+## 13. Public-Facing Pages — Minimal Routing Pattern
+
+> **Added:** 2026-04-14 (Spec 0015 Phase 3)
+
+The dispatcher dashboard uses a single `useState<Tab>` for navigation — there is **no React Router**. When a customer-facing page needs a dedicated URL (e.g. `/track/:token` for the public delivery tracking page), introduce the route at the `main.tsx` boot branch rather than installing `react-router-dom`.
+
+### Pattern (spec 0015 reference)
+
+```tsx
+// src/main.tsx
+import { createRoot } from "react-dom/client";
+import App from "./app/App.tsx";
+import { PublicTrackingPage } from "./app/components/tracking/PublicTrackingPage.tsx";
+
+const path = window.location.pathname;
+const match = path.match(/^\/track\/([0-9a-fA-F]+)\/?$/);
+
+function Root() {
+  if (match) return <PublicTrackingPage token={match[1]} />;
+  return <App />;
+}
+createRoot(document.getElementById("root")!).render(<Root />);
+```
+
+### Why this pattern
+- **Zero impact on the existing app.** The dispatcher's currentPage state, auth flow, sidebar, and tab navigation stay untouched.
+- **Zero new dependencies.** `react-router-dom` adds ~20 KB gzip and a coupling cost we don't need for two or three public routes.
+- **Full code-splitting friendly** if growth demands it — swap the direct import for `React.lazy()` + Suspense.
+
+### Server-side requirement
+Nginx must serve `index.html` for the public path. The existing `fleetcraft-frontend` config already has `try_files $uri $uri/ /index.html` as a SPA fallback — any `/track/<anything>` URL loads the same bundle, then `main.tsx` routes client-side.
+
+### When to escalate to a real router
+If you ever need more than 3 distinct public routes, or nested routes with shared layout, or URL-driven modals, migrate to `react-router-dom` (wrap `App` in `BrowserRouter`, convert tab state to routes). Don't build a homegrown router in `main.tsx` beyond a handful of `pathname.match()` branches.
+
+### Public page rules (must hold for every `/track/*`-style route)
+- **No auth wrapper, no sidebar, no dispatcher state.** Page renders as a standalone card at `max-w-[480px]` on a gray background.
+- **Data comes from sanitized endpoints only.** `GET /api/track/:token` must strip driver names, GPS coords, org IDs, and financial fields before responding (backend/SKILL.md enforces this server-side).
+- **Polling instead of WebSockets in v1.** 30-second interval is enough for milestone status updates.
+- **Time zone is Pacific explicitly.** `toLocaleString('en-US', { timeZone: 'America/Los_Angeles' })` — customers should not see raw UTC.
+- **Error copy is generic.** "This tracking link is not valid or has expired." Never reveal whether a token has been seen, is truly expired, or never existed.
