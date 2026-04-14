@@ -330,6 +330,43 @@ psql -h localhost -U fleetcraft -d fleetcraft_db -f migrations/003_add_user_stat
 
 **Drift detection (future work):** A weekly cron that runs `pg_dump -s fleetcraft_db | diff <canonical-dump-in-git>` would flag drift automatically. Until that exists, audit schema quarterly by diffing `pg_dump -s` against a fresh `psql -f migrations/*.sql` on a throwaway DB.
 
+### Sudo-postgres ownership gotcha
+
+> **Lesson learned:** Migration 021 (Spec 0015) created `delivery_notifications` via `sudo -u postgres psql`. The table ended up owned by `postgres` and the `fleetcraft` app role got "permission denied" on INSERT. The error surfaced as silent notification failures. Fix: add `ALTER TABLE <t> OWNER TO fleetcraft` inside a `DO $$ ... END$$` idempotency block at the end of the migration.
+
+**Rule:** Any new table defined by a migration must include an OWNER transfer if the migration is applied via `sudo -u postgres`. Prefer running migrations via the fleetcraft role directly when possible:
+
+```bash
+# Preferred — migration is owned by the app role from creation:
+PGPASSWORD="$PG_PASSWORD" psql -h localhost -U fleetcraft -d fleetcraft_db -f migrations/NNN.sql
+
+# Fallback (if app role lacks CREATE privilege on the schema) — include owner transfer:
+sudo -u postgres psql -d fleetcraft_db -f migrations/NNN.sql
+# migration must end with:
+# DO $$ BEGIN ALTER TABLE <new_table> OWNER TO fleetcraft; END$$;
+```
+
+### package.json drift — `npm install` will prune unlisted deps
+
+> **Lesson learned:** During Spec 0015 Phase 1 deploy, `npm install` on the droplet pruned `@aws-sdk/client-s3` and `multer` because they were `require()`d by `server.js` but not listed in `package.json`. fleet-api crashed with MODULE_NOT_FOUND. Both deps had been installed manually at some point in the past and nobody committed the package.json change.
+
+**Rule:** Before any `npm install` on a live server, audit that every `require('X')` in the codebase corresponds to a line in `package.json` dependencies. A quick one-liner:
+
+```bash
+cd /opt/<service>
+node -e "
+const fs = require('fs');
+const deps = new Set(Object.keys(require('./package.json').dependencies || {}));
+const src = fs.readFileSync('server.js', 'utf8');
+const required = [...src.matchAll(/require\\(['\"]([^./'\"][^'\"]*)['\"]/g)].map(m => m[1]);
+const missing = required.filter(r => !deps.has(r.split('/').slice(0, r.startsWith('@') ? 2 : 1).join('/')));
+if (missing.length) console.log('MISSING from package.json:', missing);
+else console.log('OK — every require() has a matching dependency');
+"
+```
+
+If the audit flags anything, run `npm install <name>` locally (which adds to package.json), commit, push, and only then pull on the droplet.
+
 ### 9.3 Self-Documenting Files
 
 > **Rule:** Every .js file must have a header comment that explains what it does, what it reads, what it writes, and what depends on it.

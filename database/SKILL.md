@@ -106,14 +106,28 @@ Related columns on `dispatches` have different lifetimes. Key the design:
 | `route_polyline` | FROZEN | Computed once via `computeAndStoreRoute()` at dispatch creation. Redrawn live only for the bright-blue current-leg line via `/api/dispatch/route-preview` |
 | `delivery_address` | LIVE via direct PATCH | Set at dispatch creation from customer request; editable via `PATCH /api/dispatches/:id`. Retroactively captured in migration 018 |
 | `delivery_lat` / `delivery_lng` | LIVE via direct PATCH | Set by `hereGeocode(delivery_address)` at creation; editable later via `PATCH /api/dispatches/:id`. Retroactively captured in migration 018 |
-| `delivery_geofence_id` | RESERVED | Added by migration 013, **never populated by any code path**. Planned for Spec 0015 (delivery tracking, TBD). Always NULL in production. Do not depend on this column until Spec 0015 ships |
+| `delivery_geofence_id` | FROZEN | Added by migration 013, populated by `POST /api/dispatches` (Spec 0015, 2026-04-14). FK to geofences row of `type='circle'` created at dispatch creation. Soft-deleted (`active=false`) when dispatch completes or cancels (Rule 13). Only non-null when `customer_id` is set on the dispatch |
 | `eta_predicted_minutes` + siblings | LIVE | Re-read from HERE on every ETA polling call (3–10 min); no propagation needed |
 
 **Why the split:** anything driver-observable at trip start (pickup address, geofence shape, origin, base route) freezes so the detention contract is stable. Anything that's just routing metadata (current coords, delivery destination, ETA) stays live so corrections propagate.
 
-### Delivery tracking — planned but not shipped
+### Delivery tracking — Spec 0015 Phase 1 shipped (2026-04-14)
 
-As of 2026-04-14, **delivery-side geofence detection does not exist**. The driver app only watches `pickup_geofences` (terminal polygons). A `delivery_geofence_id` column, delivery-leg ETA infrastructure (`eta-refresh.js` has a `STATUS_TO_DESTINATION` map entry for `en_route_delivery`), and a `customers` table exist — but no code creates delivery-geofence rows, no UI consumes delivery-leg ETA, and no public customer-facing tracking page exists. Spec 0015 (TBD) will ship all three. Until then, treat `delivery_geofence_id` and the `en_route_delivery` path in `eta-refresh.js` as reserved scaffolding, not working features.
+Backend wiring for delivery geofences, customer notifications, and the public tracking page is **live on the droplet** (Spec 0015 Phase 1):
+
+- `POST /api/dispatches` with `customer_id` → creates a `type='circle'` row in `geofences` (dispatch_id set, terminal_code NULL), populates `dispatches.delivery_geofence_id`, `tracking_token` (64-char hex), `delivery_geofences` JSONB snapshot, and `delivery_radius_m`. Fires 'scheduled' notification via `lib/notifications.js`.
+- `POST /api/driver/loads/:id/milestone` accepts `delivery_area_arrived` (idempotent — `delivery_arrived_at IS NULL` guard) and fires 'arriving' notification.
+- `en_route_delivery` → 'en_route' notification with eta_minutes. `delivered` → 'delivered' notification.
+- `GET /api/track/:token` — public, sanitized milestone view (no driver PII, no GPS coords, no org IDs).
+- `PATCH /api/customers/:id` — updates notification email/phone/radius with validation (E.164, radius 100-10000, email regex).
+
+**Still pending:** Driver app delivery-geofence detection (Phase 2), frontend public tracking page (Phase 3), Twilio SMS setup (Phase 4). Until Phase 2 ships, `delivery_area_arrived` only fires via direct milestone POST; no on-device detection yet.
+
+### delivery_notifications — audit log for customer notifications
+
+Table created by migration 021. Every attempt (sent, failed, skipped) logs a row. Used for Rule 12 deduplication: `(dispatch_id, trigger, channel)` unique per sent notification. Do NOT query this table as a source of truth for WHAT notifications customers got — query `status='sent'` rows specifically.
+
+**Ownership gotcha:** The table was initially created by `sudo -u postgres psql` which made postgres the owner, and the fleetcraft app role got "permission denied" on INSERT. Fix: migration 021 now includes `ALTER TABLE delivery_notifications OWNER TO fleetcraft` inside a DO block. **Always alter ownership on any table you create via sudo-postgres** — see deployment/SKILL.md §9.2.
 
 ---
 
