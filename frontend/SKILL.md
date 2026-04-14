@@ -402,35 +402,45 @@ without it, positions upload with `dispatch_id = NULL` and breadcrumbs can't be 
 
 > **Added:** 2026-04-13 (Spec 0014)
 
-The Container Tracking page uses `@tanstack/react-table` (v8.21+) for the main data table.
+The Container Tracking page uses `@tanstack/react-table` for the main data table.
 
-### Key files:
-- `src/app/components/container/ContainerGrid.tsx` — TanStack Table with 29 columns across 5 groups + 1 pinned-right
-- `src/app/components/container/ColumnVisibilityMenu.tsx` — gear-icon dropdown for column visibility
-- `src/app/components/container/gridUtils.ts` — shared formatters (`formatUTCDate`, `formatShortDate`, `formatShortDateTime`, `abbreviateTerminal`) + group color map
-- `src/app/hooks/usePersistedColumnState.ts` — localStorage persistence (key `fc-container-grid-columns`)
+### Key files
+- `src/app/components/container/ContainerGrid.tsx` — TanStack Table with 29 columns
+- `src/app/components/container/ColumnVisibilityMenu.tsx` — column visibility dropdown
+- `src/app/components/container/gridUtils.ts` — shared column width defaults and format helpers
+- `src/app/hooks/usePersistedColumnState.ts` — localStorage persistence
 
-### Rules:
-- `container` and `status` columns are always pinned LEFT and cannot be hidden
-- `actions` column is always pinned RIGHT and cannot be hidden
-- RETURN group (5 columns) + `en_route` (Delivery En Route) are hidden by default
-- Column widths and visibility persist to localStorage key `fc-container-grid-columns`
-  - Sizing writes debounced 300ms
-  - Visibility writes immediate
-- The hook forces `container`/`status`/`actions` visibility = true on every read — defense-in-depth if localStorage is tampered with
-- Cell text colors follow group color: OCEAN blue #3b82f6, TERMINAL purple #8b5cf6, DISPATCH amber #f59e0b, DELIVERY orange #ea580c, RETURN green #059669
-- Group headers computed from visible columns — colSpan never drifts when columns are hidden
-- Cells use render-props for `status` and `actions`: `renderStatus` wraps `SmartStatusBadge`, `renderActions` holds the per-tab button logic. No duplication of business logic in the grid component.
+### Rules
+- CONTAINER and STATUS are always pinned left. ACTIONS is always pinned right. None of these can be hidden.
+- RETURN group (5 columns) is hidden by default.
+- Column widths and visibility persist to localStorage key `fc-container-grid-v2` (bump version suffix on breaking schema changes).
+- All cell rendering reuses existing format functions. Do not duplicate formatting logic.
+- When adding a new column: add to ContainerGrid.tsx column defs AND update DEFAULT_VISIBILITY and DEFAULT_SIZING in usePersistedColumnState.ts.
+- The old HTML `<table>` markup is gone. Do not recreate it. All table rendering goes through TanStack.
 
-### When adding a new column:
-1. Add a column def to `buildColumns()` in `ContainerGrid.tsx`
-2. Add its group to `COLUMN_GROUPS` in `gridUtils.ts`
-3. Add its default width to `DEFAULT_COLUMN_SIZING` in `usePersistedColumnState.ts`
-4. Add its default visibility to `DEFAULT_COLUMN_VISIBILITY` in the same file
-5. Add a human label to `COLUMN_LABELS` in `ColumnVisibilityMenu.tsx`
+### Hard-won formatting rules
 
-### Critical: column key naming
-The dispatch milestone column keys (`en_route_term`, `chassis_info`, `ingate`, `loaded`, `outgate`, `parked`, `en_route`, `at_deliv`, `pod_field`, `delivered`, `en_route_rtn`, `parked_rtn`, `at_term_rtn`, `chassis_rtn`, `empty_in`) are tied to dispatch field names the driver app writes. DO NOT rename them without a coordinated driver-app + backend migration.
+**CSS specificity:** Inline React styles lose to Tailwind preflight. All grid dimensions (font-size, line-height, padding, height, table-layout, border-collapse) must be in a scoped `<style>` block keyed by `.fc-container-grid` using `!important`. Inline styles are fallback only.
 
-### The old HTML table is gone
-Do not recreate `<table class="responsive-container-table">` or the 27-column `SortableHeader` block. All main-table rendering goes through TanStack Table now. (The archived-containers table still uses the old `useResizableColumns` hook and `SortableHeader` — migrate in a follow-up spec.)
+**Table width with `tableLayout: fixed`:** Table width must equal `table.getTotalSize()` exactly. Never set `minWidth: 100%` — it causes the browser to redistribute width across all columns when one is resized.
+
+**Column width enforcement:** Always render a `<colgroup>` with one `<col style={{ width }}/>` per visible column. `<colgroup>` widths are authoritative; `<th>` widths alone are hints the browser can override.
+
+**Sort vs resize event conflict:** Never put sort `onClick` on the whole `<th>`. Scope it to an inner `<div>` wrapping only the label and sort icon. The resize handle is an absolutely-positioned sibling with `stopPropagation`.
+
+**Pinned column borders:** Use `border-right`/`border-left` on the last pinned cell, never `inset box-shadow` on sticky cells — shadows stack into a solid vertical bar across all rows.
+
+**Row height control:** Set explicit `height` on `<tr>` elements via CSS `!important` with `box-sizing: border-box` on th/td. Without this, the tallest cell content wins.
+
+**Font-size hierarchy:** Use distinct CSS rules per role, ordered from broad to specific:
+1. `.fc-grid td, td *` — body text
+2. `.fc-grid th, th *` — header text
+3. `.fc-grid .fc-status-cell *` — status pill (smaller)
+4. `.fc-grid .fc-vessel-sub` — secondary metadata line (smallest)
+5. `.fc-grid .fc-hold-badge` — hold pill (smallest)
+
+**localStorage schema versioning:** Key by `fc-container-grid-v{N}`. On read, validate every saved key against current column defs and drop unknowns. Bump version suffix on breaking column key changes to force clean defaults. Always provide "Reset to defaults" in the UI.
+
+**Column keys are a contract:** Column IDs match dispatch field names written by the driver app (en_route_term, chassis_info, ingate, loaded, outgate, etc.). Visual order can change freely. Column keys cannot be renamed without a coordinated driver-app + backend migration. Renaming an ID silently drops a user's saved customization.
+
+**Build vs deploy:** `npm run build` creates `dist/` locally. The droplet serves the previous bundle until `scp` overwrites it. Before debugging styling complaints, verify the console hash matches the latest local build.
