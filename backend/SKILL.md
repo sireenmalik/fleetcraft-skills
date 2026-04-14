@@ -252,7 +252,7 @@ Queue time is DERIVED, never tapped by the driver.
 
 | ID | Name | Script | Status | Purpose |
 |----|------|--------|--------|---------|
-| 0 | dispatcher | dispatcher-orchestrator.js | online | Email/alert dispatching (Resend) |
+| 0 | dispatcher | /opt/fleetcraft-alerts/Dispatchers-Live/dispatcher-orchestrator.js | online | Email/alert dispatching (SendGrid since 2026-04-14) |
 | 2 | ais-collector-v2 | index.js | online | AIS WebSocket → SQLite vessel_registry |
 | 4 | container-sync | container-sync.js | online | SQLite → PG containers + auto-archive (stale + dispatch) |
 | 9 | vwc-sync | vwc-sync.js | online | Single owner of vessels_with_containers + vessels_cache |

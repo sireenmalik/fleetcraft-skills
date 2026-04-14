@@ -3,9 +3,9 @@ name: fleetcraft-integrations
 description: >
   FleetCraft external API integration rules. Use this skill when working with
   FTU (FindTEU) webhooks, AIS vessel tracking, HERE Technologies (routing,
-  geofencing, maps), Resend email, Expo push notifications, or any external
-  API. Prevents misconfiguration of webhook handlers, AIS filtering bugs,
-  and API auth issues.
+  geofencing, maps), SendGrid email, Twilio SMS, Expo push notifications, or
+  any external API. Prevents misconfiguration of webhook handlers, AIS
+  filtering bugs, and API auth issues.
 ---
 
 # FleetCraft Integrations — External API Rules
@@ -215,16 +215,77 @@ const routeParams = {
 
 ---
 
-## 4. Resend — Email
+## 4. SendGrid — Email (replaced Resend on 2026-04-14)
 
-### Used by: `dispatcher-orchestrator.js`
-- Morning briefings, vessel arrival alerts, LFD warnings
-- From address: `contact@myfleetcraft.com`
+> **Migration note:** Resend was swapped out after its API key silently expired and its v6 SDK's `{ data, error }` shape was being misread as success. See the skill git log + `fleetcraft-api` commit `0be47ed` for the full receipt. SendGrid's SDK throws on error — simpler error handling, no silent-failure footgun.
 
-### Subscriber system:
+### Used by:
+- `fleetcraft-api/lib/notifications.js` — Spec 0015 delivery notifications (scheduled / en_route / arriving / delivered)
+- `fleetcraft-alerts/Dispatchers-Live/dispatcher-orchestrator.js` — vessel arrival alerts, daily briefings, LFD warnings
+
+### Config:
+- `SENDGRID_API_KEY` — env var, required. Missing → email sends log `status='skipped'` with clear reason.
+- `SENDGRID_FROM_EMAIL` — defaults to `contact@myfleetcraft.com`. Dispatcher falls back to legacy `ALERT_FROM_EMAIL` for backward compat during the transition.
+- Package: `@sendgrid/mail` (installed in both `fleetcraft-api` and `fleetcraft-alerts/Dispatchers-Live`).
+
+### SDK pattern:
+```javascript
+const sgMail = require('@sendgrid/mail');
+sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+const [response] = await sgMail.send({ to, from, subject, html });
+// response.statusCode === 202 on accept
+// response.headers['x-message-id'] is the provider id
+// SDK THROWS on error — err.response.body has the JSON detail
+```
+
+### Legacy column compat
+`alert_logs.resend_id` (dispatcher) and `delivery_notifications.provider_id` (fleet-api) both now hold SendGrid's `x-message-id`. The `resend_id` column name was NOT renamed — doing so would invalidate historical audit queries for zero semantic value. Comments in the INSERTs note the id source is SendGrid.
+
+### Subscriber system (unchanged):
 - `alert_subscribers` table in Postgres
 - `GET/POST/DELETE /api/subscribers` endpoints in `server.js`
-- DST bug was fixed: `convertToUTC` now uses `Intl.DateTimeFormat` instead of hardcoded `-8` offset
+- DST bug fixed: `convertToUTC` uses `Intl.DateTimeFormat` instead of hardcoded `-8` offset.
+
+### If you're reading this because emails aren't arriving:
+1. `grep SENDGRID_API_KEY /opt/fleetcraft-api/.env /opt/fleetcraft-alerts/Dispatchers-Live/.env` — confirm it's set.
+2. `curl -X POST "https://api.sendgrid.com/v3/mail/send" -H "Authorization: Bearer $KEY" ...` — probe the key directly.
+3. Check SendGrid dashboard's "Activity" feed for delivery + bounce events — SendGrid's is much better than Resend's was.
+4. `pm2 logs fleet-api --err --lines 50` — notifications.js logs failed sends with the full `err.response.body`.
+
+---
+
+## 4a. Twilio — SMS (deployed 2026-04-14)
+
+> **Status:** Code deployed. Spec 0015 Phase 4 (account setup + env vars) is the manual gate. Until env vars are set, SMS sends log `status='skipped'`.
+
+### Used by:
+- `fleetcraft-api/lib/notifications.js` — Spec 0015 delivery notifications to customers via `customers.notification_phone`.
+
+### Config:
+- `TWILIO_ACCOUNT_SID` — starts with `AC...`, from Twilio console.
+- `TWILIO_AUTH_TOKEN` — account-level token. Treat like a root password.
+- `TWILIO_PHONE_NUMBER` — E.164 format (`+14253332328` etc.).
+
+### Curious quirk — Twilio creds were already on the droplet
+When the Resend→SendGrid swap ran, the alerts `.env` files (`/opt/fleetcraft-alerts/.env` and `/opt/fleetcraft-alerts/Dispatchers-Live/.env`) already had live Twilio credentials from a planned dispatcher-SMS feature that never shipped. The `fleetcraft-api/.env` does NOT have them — when Spec 0015 Phase 4 gets wired, either copy the alerts values over OR provision new ones (rotation is healthy anyway; anyone who saw the prior repo commit history saw these).
+
+### SDK pattern:
+```javascript
+const twilio = require('twilio');
+const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+const msg = await client.messages.create({
+  from: process.env.TWILIO_PHONE_NUMBER,
+  to: customer.notification_phone,   // MUST be E.164
+  body: '...',
+});
+// msg.sid is the provider_id (stored in delivery_notifications.provider_id)
+```
+
+### Phone number validation
+`PATCH /api/customers/:id` rejects non-E.164 phones with 400. Don't relax this — Twilio silently fails on malformed numbers and the cost is on you per attempt.
+
+### Graceful degrade
+Missing `TWILIO_ACCOUNT_SID` OR `TWILIO_AUTH_TOKEN` OR `TWILIO_PHONE_NUMBER` → `twilioClient` stays null, SMS sends log `status='skipped'` with reason `'Twilio not configured (SID/TOKEN/PHONE_NUMBER)'`. Email still flows independently via SendGrid.
 
 ---
 

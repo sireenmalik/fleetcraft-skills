@@ -177,21 +177,24 @@ window._result
 
 ## 7. Environment Variables
 
-### On the droplet (`/opt/fleetcraft-ais/.env` and `/opt/fleetcraft-api/.env`):
-- `FTU_API_KEY` — FindTEU API key (account #14978)
-- `RESEND_API_KEY` — Email sending
-- `HERE_API_KEY` — Maps/routing/geofencing
-- `AISSTREAM_API_KEY` — AIS vessel data
+### On the droplet — fleet-api + dispatcher (`/opt/fleetcraft-api/.env`, `/opt/fleetcraft-alerts/Dispatchers-Live/.env`):
+- `FTU_API_KEY` — FindTEU API key (account #14978, fleet-api only)
+- `HERE_API_KEY` — Maps/routing/geofencing (fleet-api only)
+- `AISSTREAM_API_KEY` — AIS vessel data (ais-collector only)
+- `SENDGRID_API_KEY` — Email (BOTH .env files need it)
+- `SENDGRID_FROM_EMAIL` — defaults to `contact@myfleetcraft.com`
+- `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER` — SMS (fleet-api needs them for Spec 0015 customer notifications; dispatcher has them already from a planned-but-unused feature)
 - Database credentials for Postgres
+- `JWT_SECRET=fleetcraft_jwt` — driver auth
 
 ### NOT on the droplet yet (needed for agentic dispatch):
 - `ANTHROPIC_API_KEY`
-- Twilio credentials
 - `DISPATCHER_PHONE`
 
 ### Dead env vars (remove if found):
-- `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` — Supabase is disconnected
-- `T49_API_KEY`, `TERMINAL49_API_KEY` — T49 is deactivated
+- `RESEND_API_KEY` — replaced by SendGrid on 2026-04-14 (`fleetcraft-api` commit `0be47ed`, `fleetcraft-alerts` commit `0c3ab21`). The key `re_buncMzo7_zFojyeWHzKbwoebfT4p13kWm` is now invalid and references to it are a bug.
+- `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` — Supabase is disconnected.
+- `T49_API_KEY`, `TERMINAL49_API_KEY` — T49 is deactivated.
 
 ---
 
@@ -256,16 +259,20 @@ When adding a new env var:
 
 ```bash
 # .env.example — commit this, never commit .env
-FTU_API_KEY=           # FindTEU container tracking API key (account #14978)
-RESEND_API_KEY=        # Resend email service
-HERE_API_KEY=          # HERE Technologies maps/routing/geofencing
-AISSTREAM_API_KEY=     # AISStream vessel AIS data
+FTU_API_KEY=             # FindTEU container tracking API key (account #14978)
+SENDGRID_API_KEY=        # SendGrid email — replaced Resend 2026-04-14
+SENDGRID_FROM_EMAIL=contact@myfleetcraft.com
+TWILIO_ACCOUNT_SID=      # Twilio SMS — Spec 0015 customer notifications
+TWILIO_AUTH_TOKEN=
+TWILIO_PHONE_NUMBER=     # E.164 format (+14253332328)
+HERE_API_KEY=            # HERE Technologies maps/routing/geofencing
+AISSTREAM_API_KEY=       # AISStream vessel AIS data
 PG_USER=fleetcraft
-PG_PASSWORD=           # Postgres password
+PG_PASSWORD=             # Postgres password
 PG_DATABASE=fleetcraft_db
 PG_HOST=localhost
 PG_PORT=5432
-JWT_SECRET=            # Driver app JWT signing key (must be 'fleetcraft_jwt')
+JWT_SECRET=              # Driver app JWT signing key (must be 'fleetcraft_jwt')
 ```
 
 ### 9.2 Schema as Code — Numbered Migrations
