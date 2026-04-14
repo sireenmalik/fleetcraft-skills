@@ -556,3 +556,35 @@ The backend's `GET /api/portal/deliveries` + `GET /api/portal/deliveries/:id` do
 3. Wrap it in `<PortalLayout>` if it needs auth + shared chrome; otherwise render raw (like `PortalLogin` / `PortalVerify`).
 4. If you need a new backend endpoint, wire it under `/api/portal/*` and protect with `requireCustomerRole` middleware.
 5. Respect double-scoping: any SQL you write on the backend must include `WHERE customer_id = $1 AND org_id = $2` — never trust frontend-supplied IDs.
+
+---
+
+## 15. Customers Page (dispatcher dashboard) — 2026-04-14
+
+Admin-facing list + detail view for customers, wired into the dispatcher sidebar at `activeTab === 'customers'`.
+
+### File: `src/app/components/customer/CustomersPage.tsx`
+
+Renders:
+- Table of all customers from `GET /api/customers` — shows name, contact, notification email/phone, radius, notifications toggle, active delivery count, last login.
+- Row click → slide-out detail drawer with editable notification fields + radius slider + master toggle.
+- **"View as customer"** button — calls `POST /api/customers/:id/admin-view-link` and opens the returned `/portal/verify?token=...` URL in a new tab. Dispatcher is signed into the portal AS that customer. Uses the same single-use magic-link flow customers self-service with.
+- **"Send login link"** button — triggers the public magic-link email to the customer's `notification_email`.
+- **"Add Customer"** modal — POSTs `/api/customers`, then PATCHes portal-specific fields (`delivery_radius_m`, `notification_email`, `notification_phone`).
+
+### Endpoint surface used by this page
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/customers` | List — now returns `active_delivery_count` + `last_login_at` |
+| POST | `/api/customers` | Create (existing, unchanged) |
+| PATCH | `/api/customers/:id` | Update notification fields + radius (existing, unchanged) |
+| POST | `/api/customers/:id/admin-view-link` | **NEW** — mints magic link, returns `/portal/verify?token=...` URL |
+| POST | `/api/customer-auth/magic-link` | Public email send (reused for "Send login link") |
+
+### "View as customer" = portal testing tool
+
+This is the feature that lets a dispatcher walk through every customer's real portal view across all their dispatches without emailing magic links to themselves. One-click onboarding verification and support. Because the URL contains a single-use token that expires in 15 min, it's safe to share (e.g., paste into a support ticket) without exposing the customer's account permanently.
+
+### Rule: don't let this become a customer-accessible endpoint
+`POST /api/customers/:id/admin-view-link` MUST stay on the dispatcher-only path of the API. It's currently unauthenticated because all dispatcher endpoints are — when dispatcher auth is added (follow-up spec), this endpoint goes under it. A customer who could hit this would be able to impersonate other customers. Protect it alongside the rest when that happens.
