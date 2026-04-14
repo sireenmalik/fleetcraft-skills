@@ -307,6 +307,29 @@ psql -h localhost -U fleetcraft -d fleetcraft_db -f migrations/003_add_user_stat
 - Migration files are the ONLY way to change the schema
 - If you need to undo, write a new migration that reverses it
 
+### Retroactive migrations — when production drifts from Git
+
+> **Rule:** If you discover a column, table, index, or constraint on the live DB that is NOT represented in `migrations/`, write a retroactive migration the same day. Never leave production schema undocumented.
+
+**Lesson learned:** In April 2026, three schema artifacts were found on the live droplet but missing from Git: `dispatches.delivery_address/lat/lng`, the `customers` table, and the dangling `dispatches.delivery_geofence_id` column added by migration 013 but never populated. This meant the DB could not be rebuilt from Git alone — a violation of reproducibility discipline (section 9). Fixed via migrations 018–020.
+
+**Retroactive migration pattern:**
+
+1. Dump the authoritative schema from the live droplet:
+   ```bash
+   ssh root@178.128.64.97 'sudo -u postgres pg_dump -s -t <table> fleetcraft_db'
+   ```
+2. Capture the `CREATE TABLE` / `ALTER TABLE` output verbatim into a new numbered migration.
+3. Wrap EVERY statement in idempotency guards:
+   - `CREATE TABLE IF NOT EXISTS`
+   - `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`
+   - `CREATE INDEX IF NOT EXISTS`
+   - For constraints (no `IF NOT EXISTS` in Postgres), use a `DO $$ ... pg_constraint` lookup block.
+4. Open the migration comment with `Purpose: Retroactive capture of <X>. Schema captured from pg_dump on <date>.` so future readers know it documents existing state rather than introducing new state.
+5. Apply on the droplet — should produce only `NOTICE: ... already exists, skipping` lines and `COMMENT` acknowledgments. Zero data movement is the expected signal.
+
+**Drift detection (future work):** A weekly cron that runs `pg_dump -s fleetcraft_db | diff <canonical-dump-in-git>` would flag drift automatically. Until that exists, audit schema quarterly by diffing `pg_dump -s` against a fresh `psql -f migrations/*.sql` on a throwaway DB.
+
 ### 9.3 Self-Documenting Files
 
 > **Rule:** Every .js file must have a header comment that explains what it does, what it reads, what it writes, and what depends on it.

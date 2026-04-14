@@ -104,10 +104,16 @@ Related columns on `dispatches` have different lifetimes. Key the design:
 | `pickup_geofences` (JSONB) | FROZEN | Snapshot of the geofence polygon(s) at dispatch creation time. Later polygon edits do NOT affect existing dispatches. Intentional — detention timers must be deterministic |
 | `origin_lat` / `origin_lng` | FROZEN | Captured from driver phone GPS at the moment of the "En Route to Pickup" tap (migration 014). Never changes post-tap. Anchors the detention evidence chain |
 | `route_polyline` | FROZEN | Computed once via `computeAndStoreRoute()` at dispatch creation. Redrawn live only for the bright-blue current-leg line via `/api/dispatch/route-preview` |
-| `delivery_lat` / `delivery_lng` | LIVE via direct PATCH | Set by `hereGeocode(delivery_address)` at creation; editable later via `PATCH /api/dispatches/:id` |
+| `delivery_address` | LIVE via direct PATCH | Set at dispatch creation from customer request; editable via `PATCH /api/dispatches/:id`. Retroactively captured in migration 018 |
+| `delivery_lat` / `delivery_lng` | LIVE via direct PATCH | Set by `hereGeocode(delivery_address)` at creation; editable later via `PATCH /api/dispatches/:id`. Retroactively captured in migration 018 |
+| `delivery_geofence_id` | RESERVED | Added by migration 013, **never populated by any code path**. Planned for Spec 0015 (delivery tracking, TBD). Always NULL in production. Do not depend on this column until Spec 0015 ships |
 | `eta_predicted_minutes` + siblings | LIVE | Re-read from HERE on every ETA polling call (3–10 min); no propagation needed |
 
 **Why the split:** anything driver-observable at trip start (pickup address, geofence shape, origin, base route) freezes so the detention contract is stable. Anything that's just routing metadata (current coords, delivery destination, ETA) stays live so corrections propagate.
+
+### Delivery tracking — planned but not shipped
+
+As of 2026-04-14, **delivery-side geofence detection does not exist**. The driver app only watches `pickup_geofences` (terminal polygons). A `delivery_geofence_id` column, delivery-leg ETA infrastructure (`eta-refresh.js` has a `STATUS_TO_DESTINATION` map entry for `en_route_delivery`), and a `customers` table exist — but no code creates delivery-geofence rows, no UI consumes delivery-leg ETA, and no public customer-facing tracking page exists. Spec 0015 (TBD) will ship all three. Until then, treat `delivery_geofence_id` and the `en_route_delivery` path in `eta-refresh.js` as reserved scaffolding, not working features.
 
 ---
 
