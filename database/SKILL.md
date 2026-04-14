@@ -123,6 +123,23 @@ Backend wiring for delivery geofences, customer notifications, and the public tr
 
 **Still pending:** Driver app delivery-geofence detection (Phase 2), frontend public tracking page (Phase 3), Twilio SMS setup (Phase 4). Until Phase 2 ships, `delivery_area_arrived` only fires via direct milestone POST; no on-device detection yet.
 
+### Customer portal columns (migration 022, 2026-04-14)
+
+Spec 0016 Phase 1 added auth + preference columns to `customers` and one column to `organizations`:
+
+| Column | Purpose |
+|---|---|
+| `customers.magic_link_token` | 64-hex single-use token for passwordless auth. Cleared by `verifyMagicLink()`. |
+| `customers.magic_link_expires_at` | 15-min TTL from generation. |
+| `customers.last_login_at` | Engagement signal, updated by verify. |
+| `customers.magic_link_attempt_count` | Rate-limit counter. Resets when `window_start` > 1h ago. |
+| `customers.magic_link_attempt_window_start` | Rolling 1-hour rate-limit window anchor. |
+| `customers.pref_email_scheduled / en_route / arriving / delivered` | Per-trigger email opt-in. Default TRUE. |
+| `customers.pref_sms_arriving / delivered` | Per-trigger SMS opt-in. Default TRUE. |
+| `organizations.display_name` | Shown in portal "via {org}" badge. Falls back to `organizations.name` if NULL. |
+
+**Rule — customer-editable vs org-managed** — the portal's `PATCH /api/portal/preferences` endpoint is restricted to the 6 `pref_*` booleans. `notification_email`, `notification_phone`, `delivery_radius_m`, `notifications_enabled` are org-managed via `PATCH /api/customers/:id` (dispatcher), NOT customer-editable. This prevents a compromised customer JWT from hijacking their own email/phone to intercept another customer's notifications.
+
 ### delivery_notifications — audit log for customer notifications
 
 Table created by migration 021. Every attempt (sent, failed, skipped) logs a row. Used for Rule 12 deduplication: `(dispatch_id, trigger, channel)` unique per sent notification. Do NOT query this table as a source of truth for WHAT notifications customers got — query `status='sent'` rows specifically.

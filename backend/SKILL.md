@@ -253,6 +253,60 @@ Queue time is DERIVED, never tapped by the driver.
 | ID | Name | Script | Status | Purpose |
 |----|------|--------|--------|---------|
 | 0 | dispatcher | /opt/fleetcraft-alerts/Dispatchers-Live/dispatcher-orchestrator.js | online | Email/alert dispatching (SendGrid since 2026-04-14) |
+
+---
+
+## Customer Portal Auth Lane (Spec 0016 Phase 1, 2026-04-14)
+
+Third auth lane alongside driver + dispatcher. Implemented in `lib/customerAuth.js`.
+
+### Three auth lanes, zero crossover
+
+| Lane | Middleware | JWT role field | Rejects |
+|---|---|---|---|
+| Driver | `requireAuth` (server.js) | absent OR anything but `'customer'` | `role='customer'` returns 403 |
+| Customer | `requireCustomerRole` (lib/customerAuth.js) | must equal `'customer'` | absent, driver, or bad → 401/403 |
+| Dispatcher | **unauthenticated** (pre-existing gap) | n/a | n/a — any caller can reach `/api/dispatches` etc. |
+
+The driver-side rejection was added by updating `requireAuth` to check `payload.role === 'customer'` → 403. Existing driver JWTs are minted without a role field, so backward compat holds.
+
+### Magic-link flow
+
+```
+POST /api/customer-auth/magic-link     { email }
+  → generateMagicLink() in lib/customerAuth.js
+  → customers.magic_link_token (64-hex), .magic_link_expires_at (NOW + 15m)
+  → SendGrid email to customer.notification_email with
+    https://myfleetcraft.com/portal/verify?token=<hex>
+  → Always returns 200 (enumeration prevention — unknown emails drop silently)
+  → Rate limit: 3/email/hour via magic_link_attempt_count + window_start columns
+
+GET /api/customer-auth/verify?token=<hex>
+  → verifyMagicLink() checks 64-hex format, expiry, clears token (single-use)
+  → Issues jsonwebtoken with payload { customer_id, org_id, role: 'customer' }
+  → TTL 7 days
+  → Stamps customers.last_login_at
+```
+
+### Portal endpoints (all require role='customer')
+
+```
+GET   /api/portal/deliveries            paginated, sanitized dispatch list
+GET   /api/portal/deliveries/:id        single dispatch with milestones + route_polyline
+PATCH /api/portal/preferences           toggle pref_email_*/pref_sms_* only
+```
+
+**Double-scoped queries** — every SELECT includes `WHERE customer_id = $1 AND org_id = $2`. A crafted request with another customer's dispatch ID returns 404, not the dispatch. This is the tenant isolation guarantee.
+
+**Sanitization rule** — portal endpoints strip `driver_id`, `pickup_lat/lng`, `delivery_lat/lng`, `origin_lat/lng`, `org_id` from responses. Customer sees container_number, status, milestones, timestamps, tracking_token, pod_photo_url. Enforced in the SELECT column list, not by post-filter — no risk of accidental field leak via `SELECT *`.
+
+### PATCH /api/portal/preferences is locked-down
+
+Customer can only toggle 6 boolean fields (`pref_email_scheduled / en_route / arriving / delivered`, `pref_sms_arriving / delivered`). Requests with any other field (e.g. `notification_email`) are rejected with 400. This prevents a customer from hijacking their own notification address to intercept someone else's delivery updates.
+
+### Rate limit semantics
+
+`magic_link_attempt_count` is incremented on every request (even ones we drop silently). `magic_link_attempt_window_start` resets when older than 1 hour. After 3 accepted requests in a window, further requests return 200 to the caller (enumeration-safe) but do NOT send email or mint a token — the counter just keeps climbing.
 | 2 | ais-collector-v2 | index.js | online | AIS WebSocket → SQLite vessel_registry |
 | 4 | container-sync | container-sync.js | online | SQLite → PG containers + auto-archive (stale + dispatch) |
 | 9 | vwc-sync | vwc-sync.js | online | Single owner of vessels_with_containers + vessels_cache |
