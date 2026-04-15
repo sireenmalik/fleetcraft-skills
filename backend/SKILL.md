@@ -61,6 +61,18 @@ fleetcraft-api/
 4. **Import helpers from `lib/`, never duplicate.** If a helper is used by two routers, it belongs in `lib/`.
 5. **Update the self-documenting header** at the top of any route file you change — keep `READS FROM / WRITES TO / AUTH / DEPENDS ON` current.
 
+### Three auth lanes (lib/middleware.js)
+
+| Middleware | Applied to | Semantics |
+|---|---|---|
+| `requireAuth` | `routes/driver.js` | 401 if no header; 403 if role='customer'; else attach `req.driver` |
+| `requireCustomerRole` | `routes/portal.js` | 401 if no header or not role='customer'; attach `req.customer` |
+| `requireDispatcher` | every other dispatcher route file | **Permissive**: no header → next(); invalid token → next(); only rejects `role='customer'` with 403 |
+
+**Why `requireDispatcher` is permissive** — the dispatcher dashboard at `myfleetcraft.com` still makes API calls without an Authorization header. Full dispatcher auth (login endpoint + frontend JWT plumbing) is a separate spec. This middleware closes only the cross-role replay vector from Spec 0016 §9 (customer JWT pasted into a dispatcher call). When dispatcher login lands, flip the `if (!header) return next()` branch to `return res.status(401).json({ error: 'No token' })` and test the dashboard.
+
+**Applied via `router.use(requireDispatcher)`** at the top of: containers, containers-legacy, dispatches, customers, resources, terminals, geofences, subscribers, fleet, vessels, misc. **Not applied** to: driver (has requireAuth), portal (has requireCustomerRole), health (public).
+
 ### Rollback anchors
 
 Every Phase 0-12 extraction has a git tag:
