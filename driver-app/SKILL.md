@@ -353,6 +353,116 @@ See backend/SKILL.md + database/SKILL.md for the server side.
 
 ---
 
+## 6b. Auto-Detect Engine — Spec 0021 Phase 2 (2026-04-15)
+
+One GPS watcher, four detection paths, one staged-event pipeline, one 8-second undo toast. Every auto-triggered milestone (entry or exit) lands on the same rails.
+
+### The four detection paths
+
+| Trigger event | Kind | Guard | Armed during |
+|---|---|---|---|
+| `terminal_area_arrived` | polygon entry | 2-tick dwell (~30s) | pickup phases |
+| `delivery_area_arrived` | circle entry | 2-tick dwell (~30s) | `en_route_delivery` |
+| `gate_out_detected` | distance exit | 0.5 mi past polygon bounding circle for 4 ticks (~60s) | `gate_out` / `loaded` / `container_loaded` / `in_transit_parked` |
+| `en_route_return_detected` | distance exit | 0.5 mi from `delivery_lat/lng` for 4 ticks | `delivered` / `pod_captured` / `at_delivery` |
+
+**Rule — distance, not speed, for gate-out.** Terminal yard speeds vary (trucks crawl at 5 mph, stop at intersections). 0.5 mi past the polygon's bounding circle for 60s is definitive. Same logic for return-leg.
+
+**Entry dwell blocks GPS bounce.** A single-tick reading that happens to fall inside a geofence no longer fires. Two consecutive inside-ticks are required — exactly one watcher interval of latency.
+
+### The 8-second undo toast (`components/AutoDetectToast.tsx`)
+
+- The milestone API call happens in `onConfirm`, **not** when the toast appears. Nothing is sent to the server during the 8s window.
+- Tap body → confirm immediately (shortcut past the 8s wait).
+- Tap "Undo" → `dismissAutoDetect(firedKey)` clears the fire-once + dwell counters so the detector re-arms.
+- Timer expires → auto-confirm.
+- Single knob: `AUTO_DETECT_TIMEOUT_MS = 8000` in `constants/index.ts`. All four auto-triggers share it.
+- Max 1 active toast + 1-deep queue (second detection while one is pending gets staged with last-wins).
+
+### Hook API (`useGpsTracking`)
+
+```ts
+useGpsTracking(enabled, {
+  dispatchId,
+  pickupGeofences,      // polygons (Spec 0007)
+  deliveryGeofences,    // circles (Spec 0015)
+  gateOutDetection,     // { dispatchId, terminalVertices } (Spec 0021)
+  returnDetection,      // { dispatchId, deliveryLat, deliveryLng } (Spec 0021)
+  onAutoDetect,         // (event) => void — staged, consumer owns undo
+}) => { flush, dismissAutoDetect, getTripStats, resetTripStats };
+```
+
+The callback is `onAutoDetect`, **not** the old `onGeofenceEnter`. Old signature was `(trigger, lat, lng) => void`; new is `(event: { type, lat, lng, occurredAt, firedKey }) => void`. `firedKey` must be passed back to `dismissAutoDetect` on Undo.
+
+### BackgroundServices wiring
+
+Detection configs are derived from `loads` by matching status to arm-status lists (e.g. `GATE_OUT_ARM_STATUSES = ['gate_out','loaded','container_loaded','in_transit_parked']`). These mirror the server-side WHERE-IN guards in `routes/driver.js` — client and server agree on when each detection should fire.
+
+`handleAutoDetect(event)` stages a `{ ...event, loadId }` into `pending` state. Toast renders. On confirm, `recordMilestone(loadId, type, coords, undefined, { auto_triggered: true, triggered_by: type.endsWith('_detected') ? 'distance_sustained' : 'geofence' })` fires.
+
+The `<AutoDetectToast>` is rendered as the **last child** of `<DispatchProvider>` in `app/_layout.tsx` so it draws on top of every screen (RN z-index without a portal library is fragile; render order wins).
+
+---
+
+## 6c. Trip Stats — Spec 0021 Phase 4 (2026-04-15)
+
+Approximate counters run on-device during the trip; authoritative recompute runs server-side at completion.
+
+### Local counters (every GPS tick)
+
+Inside the foreground watcher in `useGpsTracking`:
+
+```ts
+if (speed > 2) tripMovingTicks++; else tripStandingTicks++;
+tripDistanceMeters += haversineMeters(prev, current);
+```
+
+Counters **run before the accuracy gate** — a garbage GPS tick still accrues trip time. Only the detection logic is accuracy-gated. Counters reset when `options.dispatchId` changes (new load).
+
+### Exposed via `getTripStats()` → `{ movingPct, standingMinutes, totalMinutes, distanceMiles }`
+
+`BackgroundServices` polls on a **30-second interval** (not every tick) and pushes to `DispatchContext.tripStats` + `tripStatsForLoadId`. Any screen reads directly; `TripStatsBar` renders null until `totalMinutes > 0`.
+
+### Watcher runs whenever GPS is enabled
+
+Not just when a detection config is active — so counters accrue continuously, even during `at_terminal` / `loaded` statuses when no detector is armed. Detection logic inside the callback is guarded; the watcher isn't.
+
+### Authoritative recompute at completion
+
+When `advanceMilestone` advances to `completed`, `DispatchContext` fires `POST /api/dispatches/:id/compute-trip-stats` fire-and-forget. The server reads every `driver_positions` row between `en_route_pickup_at` and `completed_at`, computes the same four metrics from authoritative data, and writes `trip_*` columns. The completed-banner summary reads server values first and falls back to the last live counters if the response hasn't propagated.
+
+---
+
+## 6d. v2 9-milestone flow — Spec 0021 (2026-04-15)
+
+The driver-facing flow collapses from 15 tappable steps to 9 (4 auto + 5 photo, 1 skippable), while the DB CHECK constraint keeps all 19 statuses for backward compat (Rule 8).
+
+| # | Milestone | Kind | Skip |
+|---|---|---|---|
+| 1 | Start pickup | auto | — |
+| 2 | At terminal (ingate) | photo | — |
+| 3 | Chassis inspection | photo | **YES** when `chassis_owner='tenant'` |
+| 4 | Gate out | photo | — |
+| 5 | En route delivery | auto | — |
+| 6 | Arriving at delivery | auto | — |
+| 7 | Delivered (POD) | photo | — |
+| 8 | En route return | auto | — |
+| 9 | Return complete | photo | — |
+
+Eliminated taps (merged into auto-detect via GPS speed): `container_loaded` (merged into gate_out), `in_transit_parked` / `in_transit_parked_return` (replaced by moving/standing counters), `pod_captured` (merged into delivered), `at_return_terminal` / `chassis_returned` (merged into return complete).
+
+**Chassis skip UX.** When `load.chassis_owner === 'tenant'` and the next milestone would be `chassis_info`, `[id].tsx` renders a blue "Owner chassis" skip card, the advance button becomes **Continue**, and `advanceMilestone` fires with a skip note — no chassis modal, no photo capture screen. Default `'pool'` keeps the full inspection flow.
+
+**Components mounted in `[id].tsx` when `isActive`:**
+- `EtaHero` — big glanceable ETA (active / arriving / arrived states)
+- `DispatchRouteMap` — placeholder rendering until we pick a map dep (react-native-maps vs HERE in WebView); prop shape matches the full spec so the swap is internal
+- `TripStatsBar` — moving% / time / distance, null until counters start
+- `MilestoneList` — replaces old MilestoneTimeline. `buildMilestoneList(dispatch)` exported
+
+**Completed banner** (status = 'completed') shows a 3-cell summary grid (Total time / Distance / Moving %) sourced from server `trip_*` columns with live-counter fallback.
+
+---
+
 ## 7. Offline Mode
 
 Terminal areas and rural delivery locations often have poor cellular coverage. The app must function offline with transparent sync on reconnect.
