@@ -61,6 +61,31 @@ fleetcraft-api/
 4. **Import helpers from `lib/`, never duplicate.** If a helper is used by two routers, it belongs in `lib/`.
 5. **Update the self-documenting header** at the top of any route file you change — keep `READS FROM / WRITES TO / AUTH / DEPENDS ON` current.
 
+### Live delivery tracking (Spec 0017, 2026-04-15)
+
+`lib/liveTracking.js` is a pure-computation module. Zero DB access, zero HERE calls — it reads the eta_predicted_minutes that `eta-refresh.js` already writes onto `dispatches` and derives a customer-facing view.
+
+**Exports:**
+
+| Function | Inputs | Output |
+|---|---|---|
+| `computeEtaWindow(etaMinutes)` | raw eta minutes | `{ eta_time, eta_window, is_arriving, bracket_minutes }` — 2h/1h/45m/30m/10m brackets; <=5 min → "Arriving now" |
+| `computeBannerState(dispatch)` | dispatch row (status + distance_remaining_mi + eta_predicted_minutes) | `{ banner_type: 'amber'\|'green'\|'arriving'\|null, banner_text }` |
+| `computeRouteProgress(dispatch, driverPosition)` | dispatch + latest driver_positions row | 0–100 integer; haversine when total+driver+delivery known, status fallback otherwise |
+| `computeLiveTracking(dispatch, position, { includePrivate })` | same inputs | full `live_tracking` object or `null` (non-delivery-day status) |
+| `isDeliveryDay(dispatch)` | dispatch | boolean |
+
+**Monotonic caches** — `computeLiveTracking` holds two module-local `Map`s keyed by `dispatch.id`: progress never decreases (Rule 4) and ETA window never widens (Rule 3). Caches wipe on PM2 restart; first poll after restart may regress slightly. Document on the dispatch row if we ever need persistent monotonicity.
+
+**Public vs private** — `includePrivate: false` omits `driver_first_name` (Rule 7). `/api/track/:token` always calls with `includePrivate: false`.
+
+**Stale GPS** — when the latest `driver_positions.recorded_at` is ≥10 minutes old, `eta_window` becomes `"Updating..."` and `banner_text` appends `"(last update N min ago)"`. Progress bar holds at the cached value.
+
+**When to touch this file:**
+- New dispatch status transitions → update `DELIVERY_DAY_STATUSES` + `STATUS_PROGRESS` in `lib/liveTracking.js`.
+- New milestone event types from driver app → add to `MILESTONE_LABELS`.
+- Never add DB queries here. Keep it pure.
+
 ### Three auth lanes (lib/middleware.js)
 
 | Middleware | Applied to | Semantics |

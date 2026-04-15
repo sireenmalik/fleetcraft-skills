@@ -215,6 +215,23 @@ const routeParams = {
 - **Cost:** ~43 calls per 4.5-hour trip, ~43,000 calls/month at 1,000 trips, $22–$43/month on
   HERE Base Plan.
 
+### Spec 0017 live tracking does NOT call HERE
+
+`lib/liveTracking.js` (customer portal live tracking) is pure computation. It reads the
+`eta_predicted_minutes` that the `eta-refresh.js` worker already wrote to `dispatches` and
+derives ETA windows, progress %, and banner state from that. **Zero new HERE calls per
+portal API request.** If you're tempted to "just look up ETA on the fly" in a portal
+handler, don't — that would 10–100× the HERE bill overnight. The 5-min worker is the
+single writer of ETA data.
+
+### Spec 0015 SendGrid "Share ETA" — `lib/notifications.js`
+
+`sendShareEtaEmail(pool, { dispatch, recipientEmail, customerId, orgId, liveTracking, customMessage })`
+is a customer-initiated one-shot forward of the current ETA snapshot. Reuses the SendGrid
+singleton (same key as delivery notifications), logs to `delivery_notifications` with
+`trigger='share_eta'`. Rate-limited at the handler layer (5 per dispatch per rolling hour)
+— see `routes/portal.js POST /api/portal/share-eta`.
+
 ---
 
 ## 4. SendGrid — Email (replaced Resend on 2026-04-14)
