@@ -307,6 +307,36 @@ Customer can only toggle 6 boolean fields (`pref_email_scheduled / en_route / ar
 ### Rate limit semantics
 
 `magic_link_attempt_count` is incremented on every request (even ones we drop silently). `magic_link_attempt_window_start` resets when older than 1 hour. After 3 accepted requests in a window, further requests return 200 to the caller (enumeration-safe) but do NOT send email or mint a token — the counter just keeps climbing.
+
+## Customer Locations (Spec 0018, 2026-04-15)
+
+### CRUD endpoints
+
+```
+GET    /api/customers/:id/locations               active only, is_default desc, name asc
+POST   /api/customers/:id/locations               body: { name, address, radius_mi?, notes? }
+PATCH  /api/customers/:id/locations/:locId        partial update; re-geocodes if address changed
+DELETE /api/customers/:id/locations/:locId        → { deleted: "soft"|"hard" }
+```
+
+### POST /api/dispatches — customer_location_id resolution
+
+When request body contains `customer_location_id`, the endpoint does a **synchronous** lookup BEFORE INSERT and copies `address`, `lat`, `lng`, `radius_mi * MILE_TO_METERS` (rounded), and `notes` onto the new dispatch. `customer_location_id` itself is stored on the dispatch row so the `setImmediate` geofence block can see "this dispatch came from a location" and uses the location's radius instead of the legacy customer default.
+
+One-off typed addresses still work — when `customer_location_id` is absent, the existing geocode-the-typed-address path in `setImmediate` runs unchanged.
+
+### Delete semantics
+
+- **Soft** — if any `dispatches.customer_location_id = $locId` rows exist, flip `is_active=false` (keeps the row so historical dispatches retain the FK target).
+- **Hard** — if zero referencing dispatches, `DELETE FROM customer_locations`.
+
+### Rule — auto-default first location
+
+`POST /api/customers/:id/locations` checks active count; if zero, the new row is created with `is_default=true` regardless of request payload. Subsequent creates respect the payload. PATCH with `is_default=true` unsets any previously-default row in the same transaction (partial unique index enforces one-at-a-time).
+
+### Rule — 20 location ceiling
+
+Soft app-layer cap: the POST returns 400 `{ error: "Maximum 20 locations per customer" }` when active count already ≥ 20. No DB constraint — we may loosen this for large accounts later.
 | 2 | ais-collector-v2 | index.js | online | AIS WebSocket → SQLite vessel_registry |
 | 4 | container-sync | container-sync.js | online | SQLite → PG containers + auto-archive (stale + dispatch) |
 | 9 | vwc-sync | vwc-sync.js | online | Single owner of vessels_with_containers + vessels_cache |

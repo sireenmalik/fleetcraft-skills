@@ -191,8 +191,10 @@ const routeParams = {
 - **Call sites in `server.js`** (via the `hereGeocode(address)` helper at the same name):
   1. `POST /api/terminals` — new terminal address → stored in `terminals.lat/lng`
   2. `PATCH /api/terminals/:id` — address change → re-geocoded and propagated to active dispatches (auto-added commit `37ad6df`)
-  3. `POST /api/dispatches` setImmediate — customer `delivery_address` → stored in `dispatches.delivery_lat/lng`
+  3. `POST /api/dispatches` setImmediate — customer `delivery_address` → stored in `dispatches.delivery_lat/lng` (only when no `customer_location_id` was provided, i.e. one-off typed address)
   4. `GET /api/dispatches/:id/eta` — null-coord fallback only (defensive)
+  5. `POST /api/customers/:id/locations` setImmediate — new delivery address → `customer_locations.lat/lng` (Spec 0018)
+  6. `PATCH /api/customers/:id/locations/:locId` setImmediate — address edit → re-geocodes the location. Does NOT propagate to existing dispatches (radius/coords are FROZEN per Spec 0018).
 - **NEVER called at routing time.** Once an address is geocoded, every routing / ETA / distance / polyline call uses the stored coordinates directly. This caps geocode volume to "one call per terminal edit" rather than "one call per ETA poll."
 - **Error handling:** best-effort. If HERE returns no match or throws, the address still saves — coordinates are left null and the caller logs a warning.
 

@@ -140,6 +140,28 @@ Spec 0016 Phase 1 added auth + preference columns to `customers` and one column 
 
 **Rule — customer-editable vs org-managed** — the portal's `PATCH /api/portal/preferences` endpoint is restricted to the 6 `pref_*` booleans. `notification_email`, `notification_phone`, `delivery_radius_m`, `notifications_enabled` are org-managed via `PATCH /api/customers/:id` (dispatcher), NOT customer-editable. This prevents a compromised customer JWT from hijacking their own email/phone to intercept another customer's notifications.
 
+### customer_locations — multi-address delivery points (migration 023, Spec 0018, 2026-04-15)
+
+Customers can have 1..20 named delivery locations. Dispatch picks a location → delivery_address/lat/lng/radius/notes are snapshot onto the dispatch at creation. Replaces `customers.delivery_radius_m` (now deprecated, kept for backward compat with existing dispatches).
+
+| Column | Notes |
+|---|---|
+| `name` | Short label for dropdowns: "Dock A", "Main Warehouse" |
+| `address` | Geocoded via HERE fire-and-forget on create/edit |
+| `lat` / `lng` | DOUBLE PRECISION. Null until geocode completes; null if it fails. |
+| `radius_mi` | NUMERIC(4,1). CHECK 0.1–10.0. Converted to meters (`radius_mi * 1609.34`, rounded) when snapshotted to `dispatches.delivery_radius_m`. |
+| `is_default` | Pre-selected in dispatch form. Partial unique index `WHERE is_default=true AND is_active=true` enforces one default per customer. First location auto-defaults on POST. |
+| `is_active` | Soft-delete flag. Locations referenced by dispatches flip to false; unreferenced locations hard-delete. |
+| `notes` | Free text. Copied to `dispatches.special_instructions` at create time when request doesn't override. |
+
+**Rule — dispatch radius/address are FROZEN** — `POST /api/dispatches` resolves `customer_location_id` synchronously BEFORE INSERT: address + lat/lng + radius (in meters) + notes are copied onto the dispatch row. Editing the location afterward does NOT mutate existing dispatches. This is intentional: detention timers and notification geofences must be deterministic even when dispatcher moves a warehouse pin next quarter.
+
+**Rule — customer_location_id is optional** — one-off typed addresses still work (NULL `customer_location_id`). In that path, `setImmediate` geocodes the typed string as before.
+
+**Rule — radius conversion constant** — `const MILE_TO_METERS = 1609.34` at top of server.js. Use it consistently so frontend previews (in miles) and backend persistence (in meters) agree.
+
+**Response shape on GET /api/customers** — enriched with `location_count` (active only) and `default_location` (row_to_json of id/name/address/radius_mi, or NULL when no default).
+
 ### delivery_notifications — audit log for customer notifications
 
 Table created by migration 021. Every attempt (sent, failed, skipped) logs a row. Used for Rule 12 deduplication: `(dispatch_id, trigger, channel)` unique per sent notification. Do NOT query this table as a source of truth for WHAT notifications customers got — query `status='sent'` rows specifically.
