@@ -224,6 +224,83 @@ drayage operations.
 `container_loaded`, `gate_out`). This created a gap in breadcrumb data
 during the most critical detention window. Fixed in Spec 0013.
 
+### Defensive FG service watchdog (Spec 0021, 2026-04-15)
+
+`BackgroundServices.tsx` runs a **60-second `setInterval`** that calls
+`Location.hasStartedLocationUpdatesAsync(GPS_TASK_NAME)` while `gpsEnabled`
+is true. If it returns `false`, the OS killed the task silently
+(aggressive-battery OEM, Doze edge case, OOM kill) — we log a warning and
+immediately call `startLocationUpdatesAsync` again with the same
+`foregroundService` options.
+
+Why `hasStartedLocationUpdatesAsync` and not `isTaskRegisteredAsync`: the
+latter can report `true` for a zombie task whose process was killed. The
+"has started" variant checks the active state, so a false reading means
+the service needs restarting.
+
+Watchdog deliberately skips the first tick — the hook's own initial
+`startLocationUpdatesAsync` runs on mount; 60s later is enough time for it
+to settle so the watchdog doesn't race the hook's first start.
+
+### Battery optimization prompt (Spec 0021, 2026-04-15)
+
+Three-state SecureStore flag at `fleetcraft_battery_opt_state`:
+`'unknown'` / `'whitelisted'` / `'declined'`. Session-scoped (AuthContext
+clears on logout) so every shift-start gets a fresh prompt.
+
+On first active load (Android only, `gpsEnabled=true` for the first time):
+- State `'unknown'` → non-dismissable `Alert.alert` with **two buttons**:
+  - **"Open Settings"** → `Linking.sendIntent('android.settings.IGNORE_BATTERY_OPTIMIZATION_SETTINGS')`, falling back to `Linking.openSettings()` if the intent is rejected (Xiaomi/Oppo quirk). Optimistically writes `'whitelisted'` — we can't verify natively from Expo, so the flag is a best-effort signal.
+  - **"I'll risk it"** → writes `'declined'`, sets `DispatchContext.batteryOptDeclined = true` which renders a persistent amber banner at the top of `app/driver/load/[id].tsx`: *"⚠ GPS may be interrupted — battery optimization is ON"*.
+- State `'whitelisted'` or `'declined'` → skip the prompt, restore the banner if declined.
+
+`REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` is declared in `app.config.js` +
+`app.json` Android permissions. It's required for `Linking.sendIntent`
+to the ignore-optimization screen on some OEMs.
+
+### Known OEM battery killers
+
+Even with the Android `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` exemption,
+these manufacturers run aggressive custom battery logic that can kill
+foreground services regardless of standard Android rules:
+
+| OEM | Behavior | Mitigation |
+|---|---|---|
+| **Xiaomi (MIUI)** | Kills FG services on swipe-dismiss from recents + "Battery saver" on by default | Driver must manually enable "Autostart" + set battery to "No restrictions" per app |
+| **Oppo / Realme (ColorOS)** | "App freezing" kills background tasks after screen-off | Settings → Battery → Allow background activity |
+| **Huawei (EMUI / HarmonyOS)** | "Protected apps" list — unlisted apps get killed aggressively | Settings → Apps → Launch → manual management → all three toggles on |
+| **Samsung (One UI)** | "Deep sleeping apps" + "Put unused apps to sleep" kill FG services | Settings → Battery → Background usage limits → add FleetCraft to "Never sleeping apps" |
+
+Our 60s watchdog catches these kills and re-registers the task, but there
+will be a gap in the breadcrumb trail (up to 60s). If you see
+`[GPS watchdog] FG service is DOWN` logs in production, the driver's OEM
+is killing us — ask them to check the matching mitigation above.
+
+### ETA polling covers pickup + delivery + return (Spec 0021, 2026-04-15)
+
+`useEtaPolling` fires across three phases:
+
+| Status | Destination |
+|---|---|
+| `en_route_pickup`, `chassis_info_required` | `terminals.lat/lng` (pickup) |
+| `en_route_delivery` | `dispatches.delivery_lat/lng` |
+| `empty_en_route_return` | `terminals.lat/lng` (same pickup terminal — no separate return concept today) |
+
+Destination selection is server-side in `GET /api/dispatches/:id/eta`
+based on `dispatch.status`. The client's `ETA_ACTIVE_STATUSES` must stay
+in sync with `ETA_ARM_STATUSES` in `components/BackgroundServices.tsx` —
+both define the same 4-status set.
+
+**First-fire is immediate.** `useEffect` in `services/etaService.ts` calls
+`fetchEta()` as soon as `dispatchStatus` enters an armed phase. Does NOT
+wait for the interval timer. Variable cadence (10/5/3 min) only governs
+subsequent polls.
+
+**Detention baseline guard.** `eta_first_predicted_minutes` is the
+detention math anchor and is only written on the PICKUP leg. Delivery and
+return polls update the live `eta_*` columns but the baseline stays
+pickup-scoped.
+
 ### Variable ETA polling (Spec 0013, not yet built)
 
 Driver app will call `GET /api/dispatches/:id/eta` with current GPS.
