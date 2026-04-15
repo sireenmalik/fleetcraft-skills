@@ -537,10 +537,37 @@ Reuses the loader pattern from `VehicleMap.tsx` (not extracted to a shared helpe
 
 **No live driver dot in v1** — Spec 0016 Rule 13. Customers don't see the driver's real-time GPS in the portal. If the map fails to load or the delivery isn't geocoded, the detail page still renders with a "Map unavailable" placeholder.
 
-### Polling intervals (from spec Rule 14)
-- Dashboard: **30 s**
+### Polling intervals (from spec Rule 14 + Spec 0017 Rule 12)
+- Dashboard (Delivering Today section): **60 s**
 - Delivery detail: **15 s** (more critical as driver approaches)
+- Public tracking page (`/track/:token`): **30 s**
+- Upcoming + Completed sections: refresh on page load only (not polled)
 - No WebSockets in v1. Polling is fine for this volume.
+
+### Live Delivery Tracking components (Spec 0017, 2026-04-15)
+
+Six components live under `src/app/components/portal/`. All six are pure presentation — the computed `live_tracking` object comes from the backend (`lib/liveTracking.js`). The frontend never derives ETA / progress / banner state locally.
+
+| Component | File | Used by |
+|---|---|---|
+| `LiveBanner` | `portal/LiveBanner.tsx` | delivery-day cards + detail page + public tracking page (when `live_tracking.banner_type !== null`) |
+| `RouteProgressBar` | `portal/RouteProgressBar.tsx` | same — amber at terminal, green en route, truck glyph at fill edge |
+| `EtaWindow` | `portal/EtaWindow.tsx` | right-aligned ETA time over the narrowing bracket window |
+| `MilestoneFeed` | `portal/MilestoneFeed.tsx` | vertical timeline — pulsing dot on the last-completed milestone, filled check for prior, outline circle for pending |
+| `FiveDotTimeline` | `portal/FiveDotTimeline.tsx` + `deriveFiveDotStep(...)` | simplified 5-step for upcoming cards (loaded → at port → dispatched → in transit → delivered) |
+| `LiveTrackingCard` | `portal/LiveTrackingCard.tsx` | composes the above four + Share-ETA modal; used for each `is_delivery_day` delivery on the dashboard |
+
+**Dashboard sections (Spec 0017 §9):**
+- **Stats bar** — 4 tiles (Delivering today / At port / On vessel / Completed) driven by `stats` on the `/api/portal/deliveries` response.
+- **Delivering today** — `LiveTrackingCard` per `is_delivery_day` delivery, polls every 60 s.
+- **Upcoming** — static card with `FiveDotTimeline`, no polling.
+- **Completed** — collapsed by default, 0.75 opacity when expanded.
+
+**Rules for the components:**
+1. **Never compute live_tracking locally.** Backend is the source. If you need a new field, add it to `lib/liveTracking.js` + the response schema.
+2. **Never render `driver_first_name` on the public tracking page.** Spec 0017 Rule 7. Server enforces it via `includePrivate: false`; don't reference the field in `PublicTrackingPage.tsx`.
+3. **Share-ETA modal** lives inside `LiveTrackingCard` — it POSTs `/api/portal/share-eta` with the customer's JWT. 429 means the dispatch hit the 5-per-hour rate limit; show the user a friendly message instead of retrying.
+4. **Five-dot timeline activeStep** comes from `deriveFiveDotStep({ dispatchStatus, containerUiStatus })`. Add new statuses there, not inline in cards.
 
 ### Sanitization (enforced server-side)
 
