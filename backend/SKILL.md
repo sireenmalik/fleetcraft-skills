@@ -336,14 +336,25 @@ FTU does NOT provide: LFD, holds detail (customs/freight/terminal), yard locatio
 - Current state in `containers` is rebuilt/projected from events
 - `container_events` rows are immutable — INSERT only, no UPDATE, no DELETE
 
-### Geofence Event Pattern
-The `terminal_area_arrived` event is the only auto-triggered milestone. It follows a specific pattern:
+### Geofence + Auto-Detect Event Pattern
+Four auto-triggered milestone types ride the same idempotency rails. Every one carries `auto_triggered: true` and a client-provided `occurred_at` via `COALESCE($1::timestamptz, now())`. All are server-guarded so replays can't mutate state backwards.
 
-- **Source:** driver app (on-device geofence detection)
-- **Fields:** `auto_triggered: true`, `triggered_by: 'geofence'`, `occurred_at` from GPS reading
-- **Side effect:** Sets `dispatches.queue_start_at` WHERE `queue_start_at IS NULL` (idempotent)
-- **Idempotency:** Second fire does NOT overwrite — the WHERE NULL guard is the server-side backstop
-- **Timestamp:** Uses client-provided `occurred_at` via `COALESCE($1::timestamptz, now())`
+| Milestone | Triggered by | Status advance | Timestamp col | Guard |
+|---|---|---|---|---|
+| `terminal_area_arrived` | geofence (polygon entry) | — | `queue_start_at` | `WHERE queue_start_at IS NULL` |
+| `delivery_area_arrived` (Spec 0015) | geofence (circle entry) | — | `delivery_arrived_at` | `WHERE delivery_arrived_at IS NULL` |
+| `gate_out_detected` (Spec 0021) | distance sustained 0.5 mi past terminal for 60s | → `en_route_delivery` | `en_route_delivery_at` | `WHERE status IN ('gate_out','loaded','container_loaded','in_transit_parked')` |
+| `en_route_return_detected` (Spec 0021) | distance sustained 0.5 mi from delivery for 60s | → `empty_en_route_return` | `en_route_return_at` | `WHERE status IN ('delivered','pod_captured','at_delivery')` |
+
+**Source:** all four come from the driver app (on-device detection). Server is dumb: it doesn't re-check geometry, just accepts the event and applies the guard.
+
+**Rule — status guards prevent replay going backwards.** `terminal_area_arrived` and `delivery_area_arrived` use NULL-column guards (the timestamp can only be written once). The two Spec 0021 detections have to advance `status` — so they gate on the current status instead. An offline queue replay that arrives after the driver already reached delivery is a no-op: the WHERE clause matches zero rows.
+
+**Notification fan-out** — `gate_out_detected` fires the `'en_route'` customer notification via the existing Spec 0015 path (same as a manual `en_route_delivery` tap). `en_route_return_detected` does NOT notify customers (return leg is internal).
+
+### Trip stats endpoint (Spec 0021 Phase 1)
+
+`POST /api/dispatches/:id/compute-trip-stats` — **`requireAuth` (driver JWT)**, not `requireDispatcher`. Called fire-and-forget by the driver app at the final milestone. Single CTE query over `driver_positions` between `en_route_pickup_at` and `completed_at` computes moving %, standing minutes, total miles (haversine sum), and total minutes, then writes all five `trip_*` columns on `dispatches`. Idempotent (latest compute wins). 403 if dispatch's `org_id` doesn't match JWT org. 409 if `en_route_pickup_at IS NULL` (trip never started).
 
 ### Queue Time Calculation
 Queue time is DERIVED, never tapped by the driver.

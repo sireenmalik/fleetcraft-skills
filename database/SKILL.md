@@ -168,6 +168,23 @@ Table created by migration 021. Every attempt (sent, failed, skipped) logs a row
 
 **Ownership gotcha:** The table was initially created by `sudo -u postgres psql` which made postgres the owner, and the fleetcraft app role got "permission denied" on INSERT. Fix: migration 021 now includes `ALTER TABLE delivery_notifications OWNER TO fleetcraft` inside a DO block. **Always alter ownership on any table you create via sudo-postgres** — see deployment/SKILL.md §9.2.
 
+### Trip stats + chassis ownership (migration 024, Spec 0021 Phase 1, 2026-04-15)
+
+Driver-app-v2 introduces authoritative trip stats computed at dispatch completion and a chassis-ownership flag that controls the inspection-skip UX. All six columns live on `dispatches`.
+
+| Column | Type | Purpose |
+|---|---|---|
+| `trip_moving_pct` | NUMERIC(4,1) | % of GPS ticks with speed > 2 m/s. Populated by `POST /api/dispatches/:id/compute-trip-stats`. |
+| `trip_standing_minutes` | INTEGER | Minutes with speed ≤ 2 or NULL. 15s tick × standing_ticks / 60. |
+| `trip_distance_miles` | NUMERIC(6,1) | Σ haversine between consecutive `driver_positions` rows, in miles. |
+| `trip_total_minutes` | INTEGER | `completed_at − en_route_pickup_at` in minutes. |
+| `trip_computed_at` | TIMESTAMPTZ | Latest compute timestamp. Idempotent — repeat calls overwrite. |
+| `chassis_owner` | TEXT (default `'pool'`) | `'pool'` → rental chassis (DCLI/TRAC/Flexi-Van), full photo inspection required. `'tenant'` → company-owned, inspection skippable. Set at dispatch creation from truck/chassis record. |
+
+**Rule — compute-trip-stats is idempotent and driver-authenticated.** Endpoint uses `requireAuth` (driver JWT), reads `driver_positions` between `en_route_pickup_at` and `completed_at`, and overwrites all five columns in one query. Safe to call twice (latest wins). Called fire-and-forget by the app on the final milestone — HTTP failure doesn't block completion.
+
+**Rule — chassis_owner = 'pool' is the safe default.** Missing/unknown ownership means inspection is required; drivers only skip when `chassis_owner = 'tenant'` explicitly. Never flip the default to `'tenant'` — a compliance miss there is a real incident.
+
 ---
 
 ## 3. ui_status Values
