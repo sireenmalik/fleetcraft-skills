@@ -18,6 +18,73 @@ These rules are non-negotiable. Every one was learned from a production bug.
 
 ---
 
+## 0. File Structure (Spec 0019, 2026-04-15)
+
+> **Rule:** `server.js` is a 50-line bootstrap. **Never add `app.get/post/patch/delete` handlers directly to `server.js`.** Every endpoint lives under `routes/`. Every cross-cutting helper lives under `lib/`.
+
+```
+fleetcraft-api/
+├── server.js                       ~50 lines: express app + middleware stack + route mounts + listen()
+├── lib/
+│   ├── db.js                       pg pool (single shared instance)
+│   ├── constants.js                ORG_ID, MILE_TO_METERS
+│   ├── middleware.js               requireAuth (driver JWT), requireCustomerRole
+│   ├── here.js                     hereGeocode, computeAndStoreRoute, HERE_TRUCK_PROFILE
+│   ├── sqlite.js                   containerDb + upsertContainerToSQLite (shared with container-sync via file path)
+│   ├── upload.js                   multer + DO Spaces S3 client
+│   ├── customerAuth.js             magic-link issue/verify, requireCustomerRole
+│   ├── notifications.js            SendGrid + Twilio fire-and-forget
+│   └── snapshot-builder.js         dispatch lifecycle snapshot (Spec 0009)
+└── routes/
+    ├── health.js                   /health, /api/health, /api/health/ftu
+    ├── terminals.js                /api/terminals CRUD + propagate-to-dispatches
+    ├── geofences.js                /api/geofences CRUD
+    ├── subscribers.js              /api/subscribers CRUD (alert_subscribers)
+    ├── customers.js                /api/customers CRUD + /api/customers/:id/locations CRUD (Spec 0018)
+    ├── fleet.js                    /api/fleet/positions|routes|eta
+    ├── portal.js                   /api/portal/* + /api/customer-auth/* + /api/track/:token
+    ├── vessels.js                  /vessels/* + /api/vessels/at-terminals
+    ├── containers.js               /api/containers/* (14 endpoints, includes FTU webhook)
+    ├── containers-legacy.js        /containers/* + /archived-containers/* (legacy duplicates)
+    ├── _containerHelpers.js        SHARED by containers.js + containers-legacy.js — FTU constants, trackViaFTU, mapFTUToContainer
+    ├── driver.js                   /api/driver/* + /api/auth/driver-login (includes the large milestone handler)
+    ├── dispatches.js               /api/dispatches/* + /api/dispatch/* + legacy /dispatches
+    ├── resources.js                /api/drivers + /api/trucks + /api/chassis admin CRUD
+    └── misc.js                     /analytics/log-visit, /audit-logs, /navigation-order
+```
+
+### Rules for new endpoints
+
+1. **Find the right domain file.** If adding a customer endpoint → `routes/customers.js`. Dispatch endpoint → `routes/dispatches.js`. Don't create a new route file for a single endpoint unless the domain is genuinely new.
+2. **Add a relative path if the router is prefix-mounted** (e.g., `routes/customers.js` is mounted at `/api/customers`, so add `router.get('/:id', ...)` for `/api/customers/:id`).
+3. **Add an absolute path if the router is root-mounted** (e.g., `routes/portal.js` is mounted at `/` because it spans three prefixes — inside it use `router.get('/api/portal/deliveries', ...)`).
+4. **Import helpers from `lib/`, never duplicate.** If a helper is used by two routers, it belongs in `lib/`.
+5. **Update the self-documenting header** at the top of any route file you change — keep `READS FROM / WRITES TO / AUTH / DEPENDS ON` current.
+
+### Rollback anchors
+
+Every Phase 0-12 extraction has a git tag:
+```
+v2026.04.15-pre-route-extraction   (pre-refactor baseline)
+v2026.04.15-routes-foundation      (lib/db.js + lib/middleware.js)
+v2026.04.15-routes-health          (Phase 1)
+v2026.04.15-routes-terminals       (Phase 2)
+v2026.04.15-routes-geofences       (Phase 3)
+v2026.04.15-routes-subscribers     (Phase 4)
+v2026.04.15-routes-vessels         (Phase 5)
+v2026.04.15-routes-customers       (Phase 6)
+v2026.04.15-routes-fleet           (Phase 7)
+v2026.04.15-routes-portal          (Phase 8)
+v2026.04.15-routes-containers      (Phase 9)
+v2026.04.15-routes-driver          (Phase 10)
+v2026.04.15-routes-dispatches      (Phase 11)
+v2026.04.15-routes-complete        (Phase 12 final)
+```
+
+`git reset --hard v2026.04.15-pre-route-extraction && pm2 restart fleet-api` reverts the whole refactor in <30 seconds.
+
+---
+
 ## 1. Architecture: CQRS with Materialized Views
 
 FleetCraft uses a strict CQRS (Command Query Responsibility Segregation) pattern.

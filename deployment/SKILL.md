@@ -32,6 +32,23 @@ This is a known session-level OAuth token issue. Fall back to Claude Code for al
 
 ---
 
+## 1b. Fleet API file structure (Spec 0019, 2026-04-15)
+
+After Spec 0019 the fleet-api repo is no longer a monolith. PR review scope and diff blast radius drop dramatically: changing a customer endpoint touches only `routes/customers.js`; new subscriber fields only `routes/subscribers.js`.
+
+```
+fleetcraft-api/
+├── server.js                ~50 lines: app setup + route mounts + listen()
+├── lib/                     cross-cutting helpers (db, constants, middleware, here, sqlite, upload, customerAuth, notifications, snapshot-builder)
+└── routes/                  15 domain files (health, terminals, geofences, subscribers, customers, fleet, portal, vessels, containers, containers-legacy, _containerHelpers, driver, dispatches, resources, misc)
+```
+
+**When reviewing a diff:** only the changed route file matters. `server.js` changes should be rare (new route mount only). If a PR adds lines to `server.js`, check whether the work belongs in a route file instead — the answer is almost always yes.
+
+**Rollback:** every phase has a git tag `v2026.04.15-routes-<phase>`. See `fleetcraft-skills/backend/SKILL.md` §0 for the full list. Reverting the whole refactor is `git reset --hard v2026.04.15-pre-route-extraction && pm2 restart fleet-api` (under 30 seconds).
+
+---
+
 ## 2. Backend Deploy Workflow
 
 All backend code lives on the droplet at `178.128.64.97`.
