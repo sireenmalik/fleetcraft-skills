@@ -68,15 +68,54 @@ After deploy: hard-refresh browser (Ctrl+Shift+R).
 
 ## 4. Key Patterns
 
-### Dates — UTC formatting
-Use `getUTCMonth()` / `getUTCDate()` / `getUTCFullYear()` for all date display. Using `toLocaleDateString()` causes off-by-one day errors because the database stores UTC timestamps.
+### Dates — Terminal Time (Pacific) Formatting
 
+> **Lesson learned (Spec 0024):** Using `toLocaleDateString()` / `toLocaleString()` with no timezone argument renders timestamps in the viewer's browser timezone. A remote user in New York sees Eastern time; a developer in London sees GMT. All NWSA operations are at West Coast terminals. All timestamps must show Pacific time.
+
+#### The Rule
+
+**Use `terminalTime.ts` for ALL container/dispatch timestamp rendering.** Never use `toLocaleDateString`, `toLocaleTimeString`, or `toLocaleString` without an explicit `timeZone: 'America/Los_Angeles'` argument on any container or dispatch timestamp.
+
+#### Shared utility: `src/app/utils/terminalTime.ts`
+
+Three exports — use the right one for the right context:
+
+| Function | Returns | Use when |
+|---|---|---|
+| `formatTerminalDate(dt)` | `"M/D"` in PT | Date-only fields: LFD, discharge date, archive date, pod_eta date portion. Parses date part directly — no timezone shift on midnight UTC values. |
+| `formatTerminalDateTime(dt)` | `"M/D H:MMa"` in PT | Timestamps with time: milestone `occurred_at`, dispatch `created_at`, GPS `recorded_at`, `archived_at` |
+| `formatTerminalDateTimeShort(dt)` | `"M/D H:MMa"` or `null` in PT | Same as above but returns `null` instead of `"—"` — use in table cells where you need conditional rendering |
+
+All three use `Intl.DateTimeFormat` with `timeZone: 'America/Los_Angeles'`. DST is handled automatically.
+
+#### What NOT to replace
+
+Two functions in `ContainerTracking.tsx` are intentional UTC renderers and must NOT be replaced:
+
+| Function | Why kept |
+|---|---|
+| `formatUTCDate(dt)` | LFD and other date-only fields where we want the UTC calendar date exactly (no conversion) — e.g. `"2026-04-17"` → `"4/17"` always, regardless of timezone |
+| `formatUTCDateTime(dt)` | Same — UTC-explicit datetime formatting |
+
+The `new Date(event.timestamp).toLocaleString()` in `WebhookActivityLog` is intentional (browser-local time is acceptable for live activity logs).
+
+#### The midnight-UTC date shift bug
+
+`formatTerminalDate` parses the date part directly:
 ```typescript
-function formatUTCDate(dateStr: string): string {
-  const d = new Date(dateStr);
-  return `${d.getUTCMonth() + 1}/${d.getUTCDate()}/${d.getUTCFullYear()}`;
-}
+const datePart = str.split('T')[0].split(' ')[0]; // "2026-04-17"
+const [y, m, d] = datePart.split('-').map(Number);
+return `${m}/${d}`;
 ```
+
+This prevents: `"2026-04-17T00:00:00.000Z"` → `"4/16"` in Pacific time (midnight UTC = 5 PM PDT previous day). Date-only fields must never pass through timezone conversion.
+
+#### When adding new timestamp fields to the UI
+
+1. Is it a date-only field (no time component, stored as midnight UTC)? → `formatTerminalDate`
+2. Is it a datetime that should render in PT? → `formatTerminalDateTime` or `formatTerminalDateTimeShort`
+3. Is it a UTC-explicit date where you want the UTC calendar date? → `formatUTCDate` (rare)
+4. Is it a live/activity log where browser-local is fine? → `toLocaleString` is acceptable
 
 ### Container status badges
 Map `ui_status` to badge colors:
@@ -615,3 +654,32 @@ This is the feature that lets a dispatcher walk through every customer's real po
 
 ### Rule: don't let this become a customer-accessible endpoint
 `POST /api/customers/:id/admin-view-link` MUST stay on the dispatcher-only path of the API. It's currently unauthenticated because all dispatcher endpoints are — when dispatcher auth is added (follow-up spec), this endpoint goes under it. A customer who could hit this would be able to impersonate other customers. Protect it alongside the rest when that happens.
+
+---
+
+## 16. Terminal Time — All Container Timestamps in Pacific Time (Spec 0024)
+
+> **Added:** 2026-04-16
+
+All container and dispatch timestamps in the FleetCraft dashboard are rendered in `America/Los_Angeles` (Pacific Time) regardless of the viewer's browser locale. This is enforced via `src/app/utils/terminalTime.ts`.
+
+### Components using terminalTime
+
+| Component | File | Functions used |
+|---|---|---|
+| Container Tracking (main table + modals) | `ContainerTracking.tsx` | `formatTerminalDate`, `formatTerminalDateTimeShort` |
+| Archived Container Detail modal | `ArchivedContainerDetail.tsx` | `formatTerminalDate`, `formatTerminalDateTime` |
+| Container Grid | `ContainerGrid.tsx` | `formatTerminalDate`, `formatTerminalDateTimeShort` (if date columns present) |
+| Dispatch report (print) | `generateDispatchReport()` in ContainerTracking.tsx | `formatTerminalDateTimeShort` |
+
+### Rule — no new browser-local timestamps
+
+Any new component that renders a container timestamp, dispatch timestamp, or milestone timestamp must import from `terminalTime.ts`. Do NOT use `new Date(x).toLocaleString()` without explicit `timeZone: 'America/Los_Angeles'`.
+
+### Why not a global Intl config
+
+`Intl.DateTimeFormat` doesn't have a global default timezone. Every format call must be explicit. `terminalTime.ts` is the centralization point — add new helpers there rather than inlining timezone strings throughout the codebase.
+
+### Multi-tenant future
+
+When FleetCraft supports terminals in other time zones, `terminalTime.ts` should accept an optional `timeZone` parameter that defaults to `'America/Los_Angeles'`. The display layer passes the org's terminal timezone; the utility handles conversion. All call sites already use the shared helper, so the migration is a one-file change.
