@@ -459,6 +459,7 @@ Soft app-layer cap: the POST returns 400 `{ error: "Maximum 20 locations per cus
 | 9 | vwc-sync | vwc-sync.js | online | Single owner of vessels_with_containers + vessels_cache |
 | 7 | fleet-api | server.js | online | Express API (port 3001) |
 | 5 | dispatch-worker | here-dispatch-worker.js | STOPPED | Future HERE routing |
+| TBD | ftu-enrichment | ftu-enrichment-worker.js | online | Scheduled 30-min FTU backfill for sparse webhook containers |
 
 ### Killed Workers — PERMANENTLY KILLED (do NOT restart)
 | ID | Name | Reason killed | Replaced by |
@@ -732,6 +733,8 @@ All 3 API cancel paths (driver reject, dashboard PATCH cancel, dashboard DELETE)
 
 34. **`/containers/vessels` only shows IN_TRANSIT vessels.** Symptom: "Containers — Live Updates" dashboard card shows "No active vessels" even when there are 5 active containers at a terminal. Root cause: the endpoint's inner IN subquery required `ui_status = 'IN_TRANSIT'`, so any vessel whose containers are all AT_PORT (including the synthetic "Direct Request" vessel used by direct-add) got filtered out. **Fix (commit `f0a6782`):** removed the IN_TRANSIT gate — endpoint aggregates ALL active containers grouped by `vessel_name`, and the per-phase breakdown columns (`on_vessel`, `in_yard`, `picked_up`, `empty_returned`) carry the ui_status detail. Same error class as #31 (systemic rule).
 
+35. **FTU webhook payloads are sparse — full data requires a separate call.** Symptom: container added via FTU has null `vessel_imo`, `pod_eta`, `pol_name`, `pol_name`, `equipment_type` immediately after registration. Root cause: when FTU receives a `use_webhook=true` registration, it stores the webhook URL and returns minimal data. Subsequent webhook events also only carry state-change fields, not the full container profile. **Fix (Spec 0024):** (a) Post-webhook hook — after every `POST /containers/wh/ftu` upsert, fire `setImmediate` that calls `FTU_BASE_URL/container/:number` WITHOUT `use_webhook`/`webhook_url` params to get the full response; parse via `mapFTUToContainer`; write via `upsertContainerToSQLite`. (b) Scheduled enrichment worker — `ftu-enrichment-worker.js` runs every 30 min and calls the same full-data endpoint for all IN_TRANSIT and AT_PORT containers. **Rule:** the post-webhook call MUST NOT include `use_webhook` or `webhook_url` params. These params cause FTU to return sparse data. The webhook registration and the data fetch are separate API calls with different param sets. **Incident:** April 2026 — EGSU1111983 showed null vessel IMO, null ETA, null POL/POD for ~7 hours until a manual `POST /containers/refresh` was run.
+
 ---
 
 ## 11. Container Lifecycle Ownership
@@ -888,3 +891,51 @@ Nine timestamps / derived values that together constitute defensible detention e
 
 This chain is the commercial justification for Spec 0013 v2: drayage operators
 bill detention per hour; auditable third-party evidence (HERE) is required for dispute resolution.
+
+---
+
+## 13. FTU Enrichment Rules (Spec 0024)
+
+> **Lesson learned:** FTU webhook payloads are sparse. With `use_webhook=true`, FTU returns only state-change fields. A separate call without webhook params is required to get the full container profile.
+
+### Two-call pattern
+
+| Call | Params | Returns | When |
+|---|---|---|---|
+| Registration (`POST /container/:cn`) | `scac` + `use_webhook=true` + `webhook_url` | Subscription ID only | On `POST /containers/track` |
+| Full data fetch (`POST /container/:cn`) | `scac` only, NO webhook params | Full profile: ETA, ports, equipment, IMO | Post-webhook hook + enrichment worker |
+
+**NEVER send `use_webhook` or `webhook_url` to the full data fetch.** Adding those params switches FTU into registration mode and returns sparse data again.
+
+### Post-webhook hook
+
+Lives in `routes/containers-legacy.js` FTU webhook handler. Fires via `setImmediate` AFTER `res.json()` — never blocks the webhook response. Wraps everything in try/catch — any FTU error is logged as a warning and swallowed.
+
+```javascript
+// AFTER res.json({ ok: true, ... }) — enrichment runs in background
+setImmediate(async () => {
+  try {
+    // Full data call — deliberately no use_webhook param
+    const raw = await fetch(`${FTU_BASE_URL}/container/${containerNumber}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Authorization-ApiKey': FTU_API_KEY },
+      body: new URLSearchParams({ scac }).toString(),
+    }).then(r => r.json());
+    if (raw?.data?.events) {
+      const enriched = mapFTUToContainer(raw.data);
+      if (enriched) upsertContainerToSQLite(enriched);
+    }
+  } catch (e) {
+    console.warn(`⚠️ Post-webhook enrichment failed ${containerNumber}: ${e.message}`);
+  }
+});
+```
+
+### ftu-enrichment-worker.js rules
+
+- Reads Postgres for IN_TRANSIT + AT_PORT active containers only
+- Loads `container_exclusions` tombstone set at start of each cycle — skips excluded containers
+- Writes ONLY to SQLite via `upsertContainerToSQLite` — never Postgres directly
+- 500ms delay between FTU calls
+- Graceful shutdown on SIGINT/SIGTERM
+- Does NOT need to be running for the system to function — it is a safety net, not a critical path
