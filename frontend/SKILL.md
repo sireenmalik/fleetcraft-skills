@@ -697,3 +697,61 @@ Any new component that renders a container timestamp, dispatch timestamp, or mil
 ### Multi-tenant future
 
 When FleetCraft supports terminals in other time zones, `terminalTime.ts` should accept an optional `timeZone` parameter that defaults to `'America/Los_Angeles'`. The display layer passes the org's terminal timezone; the utility handles conversion. All call sites already use the shared helper, so the migration is a one-file change.
+
+---
+
+## 17. Dashboard Dispatch Columns (Spec 0025)
+
+> **Added:** 2026-04-16
+
+### Pickup section column order
+
+```
+EN ROUTE | CHASSIS | CHSS INFO | GEOFENCE | INGATE | QUEUE | LOADED | OUTGATE | PARKED
+```
+
+Column definitions live in `src/app/components/container/ContainerGrid.tsx`. Widths and visibility defaults live in `src/app/hooks/usePersistedColumnState.ts`. Group membership (for the DISPATCH-orange header band) lives in `src/app/components/container/gridUtils.ts` `COLUMN_GROUPS`.
+
+### Key computed columns
+
+- **GEOFENCE** — raw timestamp from `dispatches.queue_start_at` (auto, geofence fire). Rendered as `HH:MM` in 24h PT via `toLocaleTimeString('en-US', { timeZone: 'America/Los_Angeles', hour: '2-digit', minute: '2-digit', hour12: false })`. Shows `—` if the dispatch has no geofence configured or the polygon hasn't fired yet.
+- **QUEUE** — `outgate − min(geofence, ingate)` = total terminal dwell. Formula:
+  ```
+  anchor = min(queue_start_at, pickup_arrived_at)  (whichever came first)
+  duration = pickup_completed_at − anchor           (trip complete)
+           | Date.now() − anchor                    (in-flight, live tick)
+  ```
+  In-flight state renders in amber. Completed state renders in DISPATCH color.
+  Shows `—` if neither geofence nor ingate has fired yet.
+
+All other columns show formatted timestamps from the dispatch record via `formatShortDateTime` (or the inline helpers in ContainerGrid) — all in PT per §4.
+
+### The QUEUE formula — frontend-computed, not server-computed
+
+The QUEUE column is **NOT** `dispatches.queue_minutes` from the server. It is a frontend-computed duration:
+
+```
+queue = pickup_completed_at − earlier(queue_start_at, pickup_arrived_at)
+```
+
+This measures total terminal presence from first contact (geofence fire OR ingate tap, whichever came first) to departure (outgate). It works for both geofence-capable terminals and terminals without a configured polygon (falls back to `pickup_arrived_at`).
+
+**Why not `queue_minutes`?** The server-computed `queue_minutes` uses only `queue_stop_at − queue_start_at`, which returns NULL whenever `queue_start_at` is missing (no geofence). The frontend formula degrades gracefully — always returns a useful number as long as either anchor is present.
+
+### Rule — never revert the QUEUE formula
+
+Do not revert the QUEUE cell to `loaded_at − pickup_arrived_at`. That was the original buggy formula — it measures terminal dwell (ingate-to-seal), not queue. If the "seal-to-ingate" metric is needed, add a new column called TERMINAL DWELL; don't overwrite QUEUE.
+
+### Rule — GEOFENCE column must be PT-aware
+
+`toLocaleTimeString` without `timeZone: 'America/Los_Angeles'` will render in browser-local time and violate Spec 0024. Any new time-only column must follow this pattern.
+
+### Rule — new column checklist
+
+Adding a new column to the grid requires THREE coordinated edits:
+
+1. `ContainerGrid.tsx` — add the column def in `buildColumns()` at the desired position
+2. `usePersistedColumnState.ts` — add `<id>: <width>` to `DEFAULT_COLUMN_SIZING` and `<id>: true` (or false) to `DEFAULT_COLUMN_VISIBILITY`
+3. `gridUtils.ts` — add `<id>: '<GROUP>'` to `COLUMN_GROUPS` (OCEAN, TERMINAL, DISPATCH, DELIVERY, RETURN)
+
+Missing any of these causes: wrong default width, column not persisted in localStorage, or column falls out of the DISPATCH orange header band.

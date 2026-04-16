@@ -61,12 +61,14 @@ at_return_terminal → chassis_returned → returned → completed
 ### Milestone flow the driver walks through (15 tappable steps):
 
 ```
-en_route_pickup → chassis_info → at_terminal (Ingate) →
+en_route_pickup → at_terminal (Ingate) → chassis_info →
 container_loaded → gate_out → in_transit_parked → en_route_delivery →
 at_delivery → pod_captured → delivered →
 empty_en_route_return → in_transit_parked_return →
 at_return_terminal → chassis_returned → completed
 ```
+
+> **Note (Spec 0025, 2026-04-16):** The v1 state machine (`MILESTONE_ORDER` + `NEXT_MILESTONE` in `constants/index.ts`) was aligned with the v2 `MilestoneList` visual. The order is now **ingate before chassis**, matching real-world PCT/T18 flow — drivers pass the gate booth first, then find a parking spot and perform chassis inspection. The backend is permissive (no transition guard in `routes/driver.js`), so this is a pure client-side change. `POSITION_BY_STATUS` in `MilestoneList.tsx` was not updated in Spec 0025 — some status → milestone-index mappings may be off by one until Spec 0021 Phase 2 ships the full v2 UI.
 
 `in_queue` is NOT a tappable milestone. Queue time is calculated:
 - Primary: `queue_start_at` (geofence fire) to `queue_stop_at` (outgate EIR photo)
