@@ -99,6 +99,20 @@ Two functions in `ContainerTracking.tsx` are intentional UTC renderers and must 
 
 The `new Date(event.timestamp).toLocaleString()` in `WebhookActivityLog` is intentional (browser-local time is acceptable for live activity logs).
 
+#### gridUtils.ts — PT formatting required
+
+`gridUtils.ts` exports its own date helpers used by `ContainerGrid.tsx`. These must also use Pacific Time — they are NOT covered by `terminalTime.ts`.
+
+| Function | Status | Rule |
+|---|---|---|
+| `formatShortDateTime` | ✅ PT (Intl.DateTimeFormat, America/Los_Angeles) | All dispatch milestone columns — EN ROUTE, INGATE, LOADED, OUTGATE, etc. |
+| `formatShortDate` | ✅ PT (Intl.DateTimeFormat, America/Los_Angeles) | ETA column and EMPTY IN column |
+| `formatUTCDate` | ✅ intentional UTC | LFD column only — do not change |
+
+**Rule:** if you modify `gridUtils.ts`, never revert `formatShortDateTime` or `formatShortDate` back to `d.getMonth()` / `d.getHours()` / `d.getDate()` patterns. Those are browser-local and will break for any viewer outside Pacific Time. Always use `Intl.DateTimeFormat` with `timeZone: 'America/Los_Angeles'`.
+
+**The ETA cell in ContainerGrid.tsx** uses `formatShortDateTime(pod_eta || eta)` — not `formatShortDate`. This is intentional: ETA is a datetime field and dispatchers need the arrival time, not just the date. Never revert it to date-only.
+
 #### The midnight-UTC date shift bug
 
 `formatTerminalDate` parses the date part directly:
