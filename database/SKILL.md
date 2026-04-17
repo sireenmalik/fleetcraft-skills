@@ -239,6 +239,12 @@ Quick-add endpoint sets ui_status = 'AVAILABLE' (rank 8). No ocean leg.
 ### Old values (REMOVED — do not use)
 AT_PORT, OUT_FOR_DELIVERY, EMPTY_RETURNED — migrated by Spec 0029. CHECK constraint enforces only the 18 values above.
 
+### Dispatch cancel
+When a dispatch is cancelled, ui_status resets to AVAILABLE (rank 8). The container returns to a dispatchable state. Do NOT set to any value below rank 8 — the container was already at the terminal.
+
+### Dual-writer debt (known, unfixed)
+These columns have two write paths (FTU webhook + driver.js): `pod_full_out_at`, `empty_terminated_at`, `available_for_pickup`. No forward-only guard on these columns. Both writers report the same physical event. Future spec will resolve ownership.
+
 ---
 
 ## 4. user_status Values
