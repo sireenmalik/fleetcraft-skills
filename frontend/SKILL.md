@@ -512,7 +512,7 @@ localStorage key: `fc-container-grid-v4` (bumped on any column change)
 
 ### ETA Column — Priority Chain (Spec 0027)
 
-Grid ETA column reads `display_eta` (computed server-side from VWC LEFT JOIN), NOT raw `pod_eta`. Fallback: `display_eta` > `pod_eta` > "—". Source badge: AIS (purple), FTU (blue), Moored (green). AT_PORT/OFD/EMPTY_RETURNED containers show no ETA (past the ETA phase). `display_eta` is NOT a stored column — computed at query time via LEFT JOIN `vessels_with_containers`. Do NOT add a `display_eta` column to the containers table.
+Grid ETA column reads `display_eta` (computed server-side from VWC LEFT JOIN), NOT raw `pod_eta`. Fallback: `display_eta` > `pod_eta` > "—". Source badges: AIS (purple), Arriving (amber), FTU (blue), Moored (green). ARRIVING = vessel within 5nm at SOG ≤ 1 (at port, waiting for berth — catches the gap between arrival and mooring). AT_PORT/OFD/EMPTY_RETURNED containers show no ETA (past the ETA phase). `display_eta` is NOT a stored column — computed at query time via LEFT JOIN `vessels_with_containers`. Do NOT add a `display_eta` column to the containers table.
 
 ### Rules
 - CONTAINER and STATUS are always pinned left. ACTIONS is always pinned right. None of these can be hidden.

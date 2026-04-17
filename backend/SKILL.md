@@ -659,6 +659,8 @@ Dismissed/held containers (`user_status != 'active'`) do not count — they don'
 ```
 IF vessel moored at terminal:
   eta_hours = 0, eta_source = 'MOORED'
+ELSE IF SOG <= 1 AND distance_nm < 5:
+  eta_hours = 0, eta_source = 'ARRIVING' (vessel at port, waiting for berth)
 ELSE IF FTU pod_eta exists for this vessel's containers:
   eta_hours = (pod_eta - now) in hours, eta_source = 'FTU'
 ELSE IF isHeadingToWA(destination) AND SOG > 1:
