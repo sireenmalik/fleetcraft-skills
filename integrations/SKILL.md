@@ -368,12 +368,29 @@ AISStream WebSocket → ais-collector-v2 → SQLite vessel_registry
 
 ### vwc-sync.js — Single owner of vessels_with_containers
 - Replaces both `vessel-sync.js` and `ftu-tracker.js` (both KILLED)
-- MMSI resolution: `vesselDb.getByName()` first, then `vesselDb.getByImo()` fallback
 - Container count: queries Postgres containers WHERE `user_status IS NULL OR user_status = 'active'`
 - ETA: AIS-based for WA-bound vessels (SOG > 1), FTU pod_eta fallback for others
-- Terminal geofence: moored vessels matched against terminal polygons → updates container terminal_name in SQLite
-- Stale cleanup: vessels with zero active containers + no alert flags + updated > 7 days → deleted from cache
+- Stale cleanup: vessels with zero active containers → deleted from cache (Spec 0029: any status, not just IN_TRANSIT)
 - **Never writes `alerted_*` columns** — dispatcher owns those
+
+### AIS Terminal Detection — Spec 0029
+
+vwc-sync detects vessel proximity to terminals using haversine distance to `terminals.lat/lng` (Postgres table, 6 rows). This replaces the old pointInPolygon method.
+
+| Condition | ui_status set | Terminal match |
+|-----------|---------------|----------------|
+| nav_status = Moored AND distance < 1nm | AT_BERTH (5) | Nearest terminal within 1nm |
+| SOG ≤ 1 AND distance < 5nm | AT_ANCHORAGE (4) | Nearest terminal within 5nm |
+| SOG > 1 AND distance < 20nm AND isHeadingToWA | APPROACHING (3) | Not terminal-specific |
+
+These statuses are written to **SQLite** (not Postgres direct). container-sync bridges to Postgres with the forward-only guard.
+
+The `terminals` table columns are: `terminal_code` (PK), `terminal_name`, `lat`, `lng`. Column is `terminal_name` not `name` — this caused a hotfix during Spec 0029 deploy.
+
+### Vessel-Container JOIN
+Primary: `containers.vessel_imo = vessel_registry.imo`
+Fallback: `containers.vessel_name = vessel_registry.name` (text match)
+IMO is a permanent hull identifier. Name changes when vessels are sold/renamed.
 
 ### VWC cleanup rules (April 2026)
 
