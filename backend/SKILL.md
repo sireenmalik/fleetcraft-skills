@@ -245,6 +245,8 @@ WHERE containers.user_status IS NULL
 - `held` → NO (still visible in Held tab, sync just skips via SQL guard)
 - `flagged` → NO (still visible in Flagged tab, sync just skips via SQL guard)
 
+> **Spec 0029 addition:** container-sync.js also enforces a forward-only guard on `ui_status`. The upsert guard (user_status check) and the forward-only guard (status rank check) are BOTH required. They protect different things — user_status prevents sync from overwriting user intent, forward-only prevents status regression.
+
 ---
 
 ## 3. Container Archive Flow
@@ -395,7 +397,17 @@ Queue time is DERIVED, never tapped by the driver.
 
 | ID | Name | Script | Status | Purpose |
 |----|------|--------|--------|---------|
-| 0 | dispatcher | /opt/fleetcraft-alerts/Dispatchers-Live/dispatcher-orchestrator.js | online | Email/alert dispatching (SendGrid since 2026-04-14) |
+| 0 | dispatcher | dispatcher-orchestrator.js | online | Email/alert dispatching |
+| 2 | ais-collector-v2 | index.js | online | AIS vessel position collection |
+| 4 | container-sync | container-sync.js | online | SQLite → Postgres sync with forward-only ui_status guard (Spec 0029) |
+| 7 | fleet-api | server.js | online | Express API (port 3001) |
+| 9 | vwc-sync | vwc-sync.js | online | VWC cache — AIS ocean statuses to SQLite (not Postgres direct), IMO-first JOIN, distance-based terminal detection |
+
+PERMANENTLY KILLED (do not restart):
+- id:1 vessel-sync — replaced by vwc-sync
+- id:3 ftu-tracker — replaced by FTU webhook + ftu-enrichment-worker
+- id:5 dispatch-worker — stopped, pg pool migration needed
+- id:8 archive-worker — replaced by container-sync archive logic
 
 ---
 
@@ -480,26 +492,6 @@ One-off typed addresses still work — when `customer_location_id` is absent, th
 ### Rule — 20 location ceiling
 
 Soft app-layer cap: the POST returns 400 `{ error: "Maximum 20 locations per customer" }` when active count already ≥ 20. No DB constraint — we may loosen this for large accounts later.
-| 2 | ais-collector-v2 | index.js | online | AIS WebSocket → SQLite vessel_registry |
-| 4 | container-sync | container-sync.js | online | SQLite → PG containers + auto-archive (stale + dispatch) |
-| 9 | vwc-sync | vwc-sync.js | online | Single owner of vessels_with_containers + vessels_cache |
-| 7 | fleet-api | server.js | online | Express API (port 3001) |
-| 5 | dispatch-worker | here-dispatch-worker.js | STOPPED | Future HERE routing |
-| TBD | ftu-enrichment | ftu-enrichment-worker.js | online | Scheduled 30-min FTU backfill for sparse webhook containers |
-
-### Killed Workers — PERMANENTLY KILLED (do NOT restart)
-| ID | Name | Reason killed | Replaced by |
-|----|------|--------------|-------------|
-| 1 | vessel-sync | PERMANENTLY KILLED — dual-writer on vessels_with_containers | vwc-sync.js |
-| 3 | ftu-tracker | PERMANENTLY KILLED — dual-writer on vessels_with_containers, cache refresh redundant | vwc-sync.js |
-| 8 | archive-worker | PERMANENTLY KILLED — logic merged into container-sync.js | container-sync.js |
-
-### Adding a New Worker
-1. Create the .js file in `/opt/fleetcraft-ais/` or `/opt/fleetcraft-api/`
-2. Start with `pm2 start <file> --name <n>`
-3. Run `pm2 save` to persist
-4. Add to this table
-5. Create a Dockerfile for the worker (incremental containerization rule)
 6. Update `ecosystem.config.js` in the repo
 
 ---
@@ -713,9 +705,10 @@ vwc-sync uses haversine distance to `terminals` table (NOT pointInPolygon agains
 - Log: "AIS → SQLite: {vessel} → {status} ({count} containers)"
 
 ### Container status values
-- `ui_status` has 18 values (Spec 0029). Old values (AT_PORT, OUT_FOR_DELIVERY, EMPTY_RETURNED) no longer valid.
-- Dispatch-ready containers: `ui_status IN ('AVAILABLE', 'DISCHARGED')` AND `user_status = 'active'` — both conditions required
-- Dispatch button in frontend checks `AVAILABLE || DISCHARGED` (deploy lesson: was AT_PORT, invisible after migration)
+- `ui_status` values are defined by Spec 0029 (18 values, forward-only). See fleetcraft-database skill section 3 for the full table.
+- Dispatch-ready containers: `ui_status IN ('AVAILABLE', 'DISCHARGED')` — enforced by dispatch creation guard in fleet-api.
+- AIS ocean statuses (IN_TRANSIT, APPROACHING, AT_ANCHORAGE, AT_BERTH) are written to SQLite by vwc-sync. container-sync bridges to Postgres.
+- Terminal detection uses haversine distance to terminals.lat/lng, NOT pointInPolygon against truck geofence polygons.
 
 ---
 
