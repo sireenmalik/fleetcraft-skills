@@ -667,6 +667,10 @@ ELSE:
   eta_hours = null, eta_source = null
 ```
 
+### ETA Propagation to Container Grid (Spec 0027)
+
+The container list API (`GET /containers/list`) LEFT JOINs `vessels_with_containers` and returns a computed `display_eta` field using the priority chain: MOORED > AIS > FTU > null. `display_eta` is computed at query time, not stored. `pod_eta` stays in the response as the raw FTU value. AT_PORT/OFD/EMPTY_RETURNED containers get `display_eta = null` (past the ETA phase). Response also includes `eta_source` ("MOORED", "AIS", "FTU", or null), `eta_hours`, `distance_nm`, and `vessel_nav_status`.
+
 ### AIS Handover — vwc-sync status override
 
 When vwc-sync detects a vessel moored inside a terminal geofence, it checks all IN_TRANSIT containers on that vessel:

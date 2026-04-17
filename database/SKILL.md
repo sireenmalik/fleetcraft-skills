@@ -527,6 +527,12 @@ For the permanent test container ALPHA1234: after cancelling a dispatch, also cl
 
 ---
 
+## display_eta — Computed, NOT Stored (Spec 0027)
+
+`display_eta` is NOT a column in the `containers` table. It is computed at query time via `LEFT JOIN vessels_with_containers` in the container list endpoint. Do NOT add a `display_eta` column. The JOINed computation ensures freshness (updates every 30s as vwc-sync refreshes VWC). Related fields `eta_source`, `eta_hours`, `distance_nm`, `vessel_nav_status` are also computed from the JOIN.
+
+---
+
 ## NUMERIC/DECIMAL String Coercion (v1.3.5 lesson)
 
 > **Lesson learned:** Postgres NUMERIC columns serialize as strings in JSON responses via the pg driver (e.g. `"47.282000"` instead of `47.282`). This silently breaks any JavaScript arithmetic on the frontend — `"47.28" + 0.1` becomes `"47.280.1"` (string concatenation), not `47.38`.
