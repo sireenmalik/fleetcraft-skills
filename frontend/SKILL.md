@@ -508,7 +508,7 @@ Removed columns (do NOT re-add):
 - parked (PARKED) — Spec 0026 removed this milestone
 - parked_rtn (PRKD RTN) — Spec 0026 removed this milestone
 
-localStorage key: `fc-container-grid-v4` (bumped on any column change)
+localStorage key: `fc-container-grid-v5` — **FROZEN per Spec 0028. Do NOT bump.** Column additions/removals use merge logic. Only rename requires a bump (which requires Spec 0026 update first).
 
 ### ETA Column — Priority Chain (Spec 0027)
 
@@ -529,7 +529,7 @@ Grid ETA column reads `display_eta` (computed server-side from VWC LEFT JOIN), N
 ### Rules
 - CONTAINER and STATUS are always pinned left. ACTIONS is always pinned right. None of these can be hidden.
 - RETURN group (4 columns) is hidden by default.
-- Column widths and visibility persist to localStorage key `fc-container-grid-v3`.
+- Column widths and visibility persist to localStorage key `fc-container-grid-v5` (FROZEN — Spec 0028).
 - All cell rendering reuses existing format functions. Do not duplicate formatting logic.
 - When adding a new column: update Spec 0026 FIRST, then add to ContainerGrid.tsx column defs AND update DEFAULT_VISIBILITY and DEFAULT_SIZING in usePersistedColumnState.ts AND add to COLUMN_GROUPS in gridUtils.ts.
 - The old HTML `<table>` markup is gone. Do not recreate it. All table rendering goes through TanStack.
@@ -818,3 +818,27 @@ Adding a new column to the grid requires THREE coordinated edits:
 3. `gridUtils.ts` — add `<id>: '<GROUP>'` to `COLUMN_GROUPS` (OCEAN, TERMINAL, DISPATCH, DELIVERY, RETURN)
 
 Missing any of these causes: wrong default width, column not persisted in localStorage, or column falls out of the DISPATCH orange header band.
+
+---
+
+## 18. Container Grid UX — Spec 0028
+
+> **Added:** 2026-04-17
+
+### Collapsible RETURN group
+RETURN columns (EN RT RTN, AT TRM RTN, CHSS RTN, COMPLETE, EMPTY IN) collapse into a single summary cell by default. Summary shows: "Returning" (amber) if in return phase, "Completed" (green) if done, "—" otherwise. One click expands to full columns. Expanded/collapsed state persists to localStorage.
+
+### Phase stripe
+3px left border on each row. Color by lifecycle phase:
+- Blue (`#3b82f6`): IN_TRANSIT, no dispatch
+- Amber (`#f59e0b`): pickup phase (en_route_pickup through gate_out)
+- Orange (`#ea580c`): delivery phase (en_route_delivery through delivered)
+- Purple (`#8b5cf6`): return phase (empty_en_route_return through chassis_returned)
+- Green (`#22c55e`): completed
+- Gray (`#6b7280`): AT_PORT, no dispatch
+
+### Sticky columns (5 pinned left)
+CONTAINER + STATUS + VESSEL + ETA + DISCHARGED — always visible, never scroll horizontally. Cannot be hidden via column visibility menu.
+
+### localStorage is FROZEN
+Key `fc-container-grid-v5` must NOT be bumped. Column additions/removals handled by merge logic in `usePersistedColumnState.ts`. "Reset to defaults" is the only way to clear saved state. Page reload NEVER resets customizations.
