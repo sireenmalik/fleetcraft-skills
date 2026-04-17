@@ -242,8 +242,8 @@ AT_PORT, OUT_FOR_DELIVERY, EMPTY_RETURNED — migrated by Spec 0029. CHECK const
 ### Dispatch cancel
 When a dispatch is cancelled, ui_status resets to AVAILABLE (rank 8). The container returns to a dispatchable state. Do NOT set to any value below rank 8 — the container was already at the terminal.
 
-### Dual-writer debt (known, unfixed)
-These columns have two write paths (FTU webhook + driver.js): `pod_full_out_at`, `empty_terminated_at`, `available_for_pickup`. No forward-only guard on these columns. Both writers report the same physical event. Future spec will resolve ownership.
+### Dual-writer debt — RESOLVED
+`pod_full_out_at`, `empty_terminated_at`, `available_for_pickup` previously had dual writers (FTU + driver.js). Fixed: driver.js writes removed. FTU is the sole owner via SQLite → container-sync. See Spec 0029 section 17 for the full column ownership table.
 
 ---
 
