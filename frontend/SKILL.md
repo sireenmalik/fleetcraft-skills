@@ -482,8 +482,8 @@ This table is a CONTRACT. Adding, removing, renaming, or reordering columns requ
 | 9 | driver | DRIVER | driver_name | DISPATCH |
 | 10 | truck | TRUCK | truck_name | DISPATCH |
 | 11 | en_route_term | EN ROUTE | en_route_pickup_at | DISPATCH |
-| 12 | geofence | GEOFENCE | queue_start_at | DISPATCH |
-| 13 | chassis_info | CHSS INFO | chassis_info_at | DISPATCH |
+| 12 | chassis_info | CHSS INFO | chassis_info_at | DISPATCH |
+| 13 | geofence | GEOFENCE | queue_start_at | DISPATCH |
 | 14 | ingate | INGATE | pickup_arrived_at | DISPATCH |
 | 15 | loaded | LOADED | loaded_at | DISPATCH |
 | 16 | outgate | OUTGATE | pickup_completed_at | DISPATCH |
