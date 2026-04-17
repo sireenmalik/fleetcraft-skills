@@ -507,9 +507,18 @@ When a dispatch is cancelled or deleted, the cancel endpoint must reset these co
 
 The container reverts to its pre-dispatch state based on FTU data that still exists (`pod_discharged_at`, `pod_arrival`).
 
-Dispatch row keeps all timestamps for audit (`status='cancelled'`, `completed_at` set).
-`container_events` are NEVER deleted — append-only audit ledger.
-GPS positions (`driver_positions`) are kept — they record what happened.
+**DELETE must clean up all four FK child tables before deleting the dispatch row:**
+```
+1. DELETE FROM delivery_notifications WHERE dispatch_id = $1
+2. DELETE FROM container_events WHERE dispatch_id = $1
+3. DELETE FROM driver_positions WHERE dispatch_id = $1
+4. DELETE FROM geofences WHERE dispatch_id = $1
+5. DELETE FROM dispatches WHERE id = $1
+```
+
+Both `delivery_notifications.dispatch_id` and `geofences.dispatch_id` have FK constraints to `dispatches.id` with NO `ON DELETE CASCADE`. Missing either cleanup causes the FK error reported in April 2026.
+
+For CANCEL (PATCH status='cancelled'): dispatch row is NOT deleted, so FK is not an issue. Events and positions are cleaned up; delivery_notifications and geofences are kept.
 
 The map in the container detail panel should only show events and GPS from the CURRENT active dispatch, not from cancelled ones. Filter by `dispatch_id` or by `occurred_at > current_dispatch.created_at`.
 

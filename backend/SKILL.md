@@ -712,16 +712,32 @@ These specific mistakes have caused production regressions:
     If `silence > 5 minutes` and the driver has an active dispatch, GPS is dead on the phone — check whether they have the latest APK, whether the app is still logged in, and whether Android battery optimization was ever whitelisted for FleetCraft.
 ### Dispatch Lifecycle Cleanup
 
-| Action | Events | Positions | Audit |
-|--------|--------|-----------|-------|
-| Cancel (API) | Deleted (except dispatch_cancelled) | Deleted | dispatch_cancelled event preserved |
-| Delete (API) | All deleted | All deleted | Nothing preserved |
-| Complete | All kept | All kept | Full audit trail for detention |
-| Cancel (direct SQL) | NOT cleaned — orphans left | NOT cleaned | NEVER do this in production |
+The DELETE handler must clean up ALL four child tables before deleting the dispatch row. Missing any one causes an FK violation.
+
+**DELETE /api/dispatches/:id cleanup order:**
+```
+1. DELETE FROM delivery_notifications WHERE dispatch_id = $1
+2. DELETE FROM container_events WHERE dispatch_id = $1
+3. DELETE FROM driver_positions WHERE dispatch_id = $1
+4. DELETE FROM geofences WHERE dispatch_id = $1
+5. DELETE FROM dispatches WHERE id = $1
+```
+
+| Action | delivery_notifications | Events | Positions | Geofences | Audit |
+|--------|----------------------|--------|-----------|-----------|-------|
+| Cancel (API) | Kept | Deleted (except dispatch_cancelled) | Deleted | Kept (soft-delete pending) | dispatch_cancelled event preserved |
+| Delete (API) | All deleted | All deleted | All deleted | All deleted | Nothing preserved |
+| Complete | All kept | All kept | All kept | Soft-delete (active=false) | Full audit trail for detention |
+| Cancel (direct SQL) | NOT cleaned — orphans left | NOT cleaned | NOT cleaned | NOT cleaned | NEVER do this in production |
 
 All 3 API cancel paths (driver reject, dashboard PATCH cancel, dashboard DELETE) auto-clean events and positions. The `dispatch_cancelled` event is logged AFTER cleanup so it survives.
 
-30. **Orphaned container_events after dispatch delete.** Dispatches deleted via direct SQL (psql, e2e test cleanup) bypass the API cancel handler, leaving orphaned `container_events` and `driver_positions`. These show as stale milestone markers on the dispatch map. Rules: (a) NEVER delete dispatches via direct SQL in production — always use the API. (b) E2E test cleanup MUST delete `container_events` and `driver_positions` BEFORE deleting dispatches. (c) To find orphans: `SELECT container_number, count(*) FROM container_events WHERE dispatch_id NOT IN (SELECT id FROM dispatches) GROUP BY container_number`. **Incident:** April 2026 — cancelled FCTEST dispatches left 29 orphaned events showing stale markers on the map.
+**FK tables that block dispatch DELETE if not cleaned first:**
+- `delivery_notifications.dispatch_id` → `dispatches.id`
+- `geofences.dispatch_id` → `dispatches.id`
+- Both have NO `ON DELETE CASCADE` — cleanup must be explicit in the handler.
+
+30. **Orphaned child rows after dispatch delete.** Dispatches deleted via direct SQL (psql, e2e test cleanup) bypass the API handler, leaving orphaned `delivery_notifications`, `container_events`, `driver_positions`, and `geofences`. Rules: (a) NEVER delete dispatches via direct SQL in production — always use the API. (b) E2E test cleanup MUST delete all four child tables BEFORE deleting dispatches: `delivery_notifications`, `container_events`, `driver_positions`, `geofences`. (c) To find orphans: `SELECT container_number, count(*) FROM container_events WHERE dispatch_id NOT IN (SELECT id FROM dispatches) GROUP BY container_number`. **Incidents:** April 2026 — cancelled FCTEST dispatches left 29 orphaned events. April 2026 — `geofences_dispatch_id_fkey` and `delivery_notifications_dispatch_id_fkey` FK violations blocked dispatch deletion until the DELETE handler was fixed to clean up all four tables.
 
 29. **Archive resurrection via FTU webhook SQLite write.** The FTU webhook handler writes to SQLite without checking `container_exclusions`. If a webhook arrives after archive, it re-creates the container in SQLite. container-sync then pushes it back to Postgres (the INSERT path of ON CONFLICT bypasses the user_status guard). Fix: (a) FTU webhook checks `container_exclusions` BEFORE writing to SQLite — if excluded, skip and return. (b) SQLite upsert has `WHERE user_status IS NULL OR user_status = 'active'` guard — archived/dismissed containers bounce off. (c) Archive endpoint verifies completion — force-deletes from both Postgres and SQLite if container is still present after the transaction. **Incident:** April 2026 — HDMU5611750 and TGBU5159346 kept reappearing after archive.
 
