@@ -674,9 +674,34 @@ ELSE:
 
 **Note on AIS nav_status accuracy:** Vessels frequently report `Under way using engine` even when stationary at anchorage. The ANCHORAGE check uses SOG + distance (objective measurements) rather than self-reported nav_status.
 
-### ETA Propagation to Container Grid (Spec 0027)
+### Container Status Lifecycle — Spec 0029 (THE BIBLE)
 
-The container list API (`GET /containers/list`) LEFT JOINs `vessels_with_containers` and returns a computed `display_eta` field using the priority chain: MOORED > AIS > FTU > null. `display_eta` is computed at query time, not stored. `pod_eta` stays in the response as the raw FTU value. AT_PORT/OFD/EMPTY_RETURNED containers get `display_eta = null` (past the ETA phase). Response also includes `eta_source` ("MOORED", "AIS", "FTU", or null), `eta_hours`, `distance_nm`, and `vessel_nav_status`.
+**AUTHORITY: fleetcraft-specs/0029-container-tracking-alignment.md**
+
+18 statuses, single `ui_status` field. Two writer paths, both with forward-only guards:
+
+| Writer | Path | Ranks | Guard |
+|---|---|---|---|
+| container-sync | SQLite → Postgres (sole bridge) | 1-8 (ocean + terminal) | rank($new) > rank($current), with ON_HOLD ↔ exceptions |
+| driver.js | Postgres direct | 9-18 (dispatch) | rank($new) > rank($current), no exceptions |
+
+**vwc-sync does NOT write `containers.ui_status` to Postgres.** It writes AIS ocean statuses (ranks 2-5) to SQLite. container-sync bridges to Postgres. vwc-sync still owns `vessels_with_containers`.
+
+**AIS terminal detection:** Distance to `terminals.lat/lng` (haversine), NOT `pointInPolygon` against truck polygons. Moored + < 1nm = AT_BERTH. SOG ≤ 1 + < 5nm = AT_ANCHORAGE. SOG > 1 + < 20nm + isHeadingToWA = APPROACHING.
+
+**Dispatch creation guard:** `POST /api/dispatches` rejects if `ui_status` not in (AVAILABLE, DISCHARGED).
+
+### ETA per status (Spec 0029 simplifies Spec 0027)
+
+ETA is determined by `ui_status`. No fallback chains. One source per status:
+
+| Status | ETA | Source |
+|---|---|---|
+| LOADED_AT_ORIGIN | FTU pod_eta | FTU |
+| IN_TRANSIT, APPROACHING | AIS distance/sog | AIS |
+| AT_ANCHORAGE | "At Anchorage · N.N nm" | AIS distance |
+| AT_BERTH | "At Berth" | AIS nav_status |
+| Ranks 6-18 | null | Past ETA phase |
 
 ### AIS Handover — vwc-sync status override
 

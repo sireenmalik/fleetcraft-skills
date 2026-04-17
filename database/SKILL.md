@@ -188,19 +188,49 @@ Driver-app-v2 introduces authoritative trip stats computed at dispatch completio
 
 ---
 
-## 3. ui_status Values
+## 3. ui_status Values — Spec 0029 (THE BIBLE)
 
-These are FTU-derived. Do not invent new values.
+**AUTHORITY: fleetcraft-specs/0029-container-tracking-alignment.md**
 
-| ui_status | Meaning | Set by |
-|-----------|---------|--------|
-| `IN_TRANSIT` | On vessel, en route | FTU webhook (default until discharged) |
-| `AT_PORT` | Discharged at terminal | FTU 'discharged from' event, OR `POST /api/containers/quick-add` (direct-add) |
-| `OUT_FOR_DELIVERY` | Gate out from terminal | FTU 'gate out full' event, OR driver milestone `gate_out` |
-| `EMPTY_RETURNED` | Empty container returned | FTU 'gate in empty' event, OR driver milestone `completed` |
+18 statuses. Single field. Forward-only rank. Old values (AT_PORT, OUT_FOR_DELIVERY, EMPTY_RETURNED) migrated by Spec 0029 migration.
+
+| Rank | ui_status | Phase | Owner | Set by |
+|---|---|---|---|---|
+| 1 | `LOADED_AT_ORIGIN` | Ocean | FTU | FTU "Loaded on" event |
+| 2 | `IN_TRANSIT` | Ocean | AIS / FTU | AIS: SOG > 1 heading WA. FTU: registration fallback. |
+| 3 | `APPROACHING` | Ocean | AIS | distance < 20nm, SOG > 1 |
+| 4 | `AT_ANCHORAGE` | Ocean | AIS | SOG ≤ 1, distance < 5nm |
+| 5 | `AT_BERTH` | Ocean | AIS | Moored, distance < 1nm |
+| 6 | `DISCHARGED` | Terminal | FTU | FTU "Discharged" event (AIS→FTU handover) |
+| 7 | `ON_HOLD` | Terminal | FTU | customs/freight/terminal hold |
+| 8 | `AVAILABLE` | Terminal | FTU | available_for_pickup = true |
+| 9 | `ASSIGNED` | Dispatch | FleetCraft | POST /api/dispatches |
+| 10 | `ACCEPTED` | Dispatch | Driver app | Driver taps Accept |
+| 11 | `EN_ROUTE_PICKUP` | Dispatch | Driver app | Spec 0026 step 1 |
+| 12 | `AT_TERMINAL` | Dispatch | Driver app | Spec 0026 step 4 |
+| 13 | `GATE_OUT` | Dispatch | Driver app | Spec 0026 step 6 |
+| 14 | `EN_ROUTE_DELIVERY` | Delivery | Driver app | Spec 0026 step 8 |
+| 15 | `AT_DELIVERY` | Delivery | Driver app | Spec 0026 step 10 |
+| 16 | `DELIVERED` | Delivery | Driver app | Spec 0026 step 12 |
+| 17 | `RETURNING` | Return | Driver app | Spec 0026 step 13 |
+| 18 | `COMPLETED` | Return | Driver app | Spec 0026 step 16 (auto) |
+
+### Forward-only guard
+`status_rank($new) > status_rank($current)`. Two exceptions: ON_HOLD ↔ DISCHARGED (hold cleared), AVAILABLE → ON_HOLD (new hold placed).
 
 ### Dispatch eligibility
-Only containers where `ui_status = 'AT_PORT'` AND `user_status = 'active'` are dispatch-ready. Both conditions required.
+Only containers where `ui_status IN ('AVAILABLE', 'DISCHARGED')` AND `user_status = 'active'` are dispatch-ready.
+
+### CHECK constraint
+```sql
+ALTER TABLE containers ADD CONSTRAINT chk_ui_status CHECK (ui_status IN (
+  'LOADED_AT_ORIGIN','IN_TRANSIT','APPROACHING','AT_ANCHORAGE','AT_BERTH',
+  'DISCHARGED','ON_HOLD','AVAILABLE',
+  'ASSIGNED','ACCEPTED','EN_ROUTE_PICKUP','AT_TERMINAL','GATE_OUT',
+  'EN_ROUTE_DELIVERY','AT_DELIVERY','DELIVERED',
+  'RETURNING','COMPLETED'
+));
+```
 
 ### Direct-add containers
 

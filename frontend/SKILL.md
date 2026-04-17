@@ -842,3 +842,40 @@ CONTAINER + STATUS + VESSEL + ETA + DISCHARGED — always visible, never scroll 
 
 ### localStorage is FROZEN
 Key `fc-container-grid-v5` must NOT be bumped. Column additions/removals handled by merge logic in `usePersistedColumnState.ts`. "Reset to defaults" is the only way to clear saved state. Page reload NEVER resets customizations.
+
+---
+
+## 19. Container Status Badge — Spec 0029 (THE BIBLE)
+
+**AUTHORITY: fleetcraft-specs/0029-container-tracking-alignment.md**
+
+### The rule
+
+Badge reads `containers.ui_status` directly. One field → one badge. No `getComputedStatus()`. No dual-source logic checking `yard_location` + `vessel_nav_status` + holds.
+
+### Badge mapping
+
+| ui_status | Label | Color |
+|---|---|---|
+| LOADED_AT_ORIGIN | Loaded | blue |
+| IN_TRANSIT | In Transit | blue |
+| APPROACHING | Approaching | blue |
+| AT_ANCHORAGE | At Anchorage | amber |
+| AT_BERTH | At Berth | amber |
+| DISCHARGED | Discharged | yellow |
+| ON_HOLD | On Hold | red |
+| AVAILABLE | Available | green |
+| ASSIGNED | Assigned | orange |
+| ACCEPTED | Accepted | orange |
+| EN_ROUTE_PICKUP | En Route to Terminal | orange |
+| AT_TERMINAL | Drvr at Terminal | orange |
+| GATE_OUT | Gate Out | orange |
+| EN_ROUTE_DELIVERY | En Route Delivery | purple |
+| AT_DELIVERY | At Delivery | purple |
+| DELIVERED | Delivered | green |
+| RETURNING | Returning | gray |
+| COMPLETED | Completed | green |
+
+### What was removed
+
+`getComputedStatus()` — 30 lines that checked `ui_status` + `yard_location` + `vessel_nav_status` + holds with missing cases (Moored not handled, caused OOCL OAKLAND to show "On Ship" while vessel was Moored). Replaced by direct `ui_status` read because Spec 0029 makes `ui_status` correct at the backend level.

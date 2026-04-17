@@ -224,6 +224,16 @@ portal API request.** If you're tempted to "just look up ETA on the fly" in a po
 handler, don't — that would 10–100× the HERE bill overnight. The 5-min worker is the
 single writer of ETA data.
 
+### Container tracking handover — Spec 0029
+
+**AIS → FTU handover at DISCHARGED (rank 6).** AIS owns ocean statuses (IN_TRANSIT through AT_BERTH). FTU owns terminal statuses (DISCHARGED through AVAILABLE). AIS cannot tell us when a container left the vessel — only the carrier (via FTU) knows that. AT_BERTH does NOT mean DISCHARGED.
+
+**FTU → FleetCraft handover at ASSIGNED (rank 9).** Once FTU confirms AVAILABLE, FleetCraft creates the dispatch.
+
+**FTU webhook does NOT write ui_status during ocean phase.** AIS is authoritative for vessel position. FTU updates data fields (pod_eta, vessel_name) but vwc-sync owns ocean status writes (to SQLite, then container-sync bridges to Postgres).
+
+Authority: fleetcraft-specs/0029-container-tracking-alignment.md
+
 ### Customer notification trigger — Spec 0026
 
 Customer "arriving" notification fires on Spec 0026 Step 9 (`delivery_eta_triggered_at`), NOT Step 10 (`delivery_arrived_at`). Step 9 = geofence proximity. Step 10 = manual arrival confirmation. If you wire notifications to step 10, customers get notified AFTER the driver is already at the dock — defeats the purpose. Authority: fleetcraft-specs/0026-fleetcraft-milestones-spec.md

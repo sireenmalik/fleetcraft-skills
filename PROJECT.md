@@ -14,6 +14,28 @@ description: >
 
 ---
 
+## RULE 00 — SPEC 0029 IS THE CONTAINER TRACKING AUTHORITY (non-negotiable)
+
+Spec 0029 (fleetcraft-specs/0029-container-tracking-alignment.md) is the SINGLE SOURCE OF TRUTH for the container status lifecycle. It defines:
+
+- 18 statuses (LOADED_AT_ORIGIN → COMPLETED), their rank, their owner, their source
+- The single-writer model: container-sync is the sole bridge from SQLite to Postgres for statuses 1-8
+- The forward-only guard: status rank can only increase (with two hold-toggle exceptions)
+- AIS → FTU handover at DISCHARGED (rank 6)
+- FTU → FleetCraft handover at ASSIGNED (rank 9)
+- AIS terminal detection: distance-based (< 1nm Moored = AT_BERTH), NOT polygon-based
+- VWC vessel-container JOIN: IMO first, name fallback
+- Dispatch creation guard: only AVAILABLE or DISCHARGED containers can be dispatched
+- Frontend badge: reads `ui_status` directly — no `getComputedStatus()`, no dual-source logic
+
+### Enforcement:
+
+1. **Before ANY code change to container status, ui_status writes, AIS handover, FTU webhook handling, container-sync, or vwc-sync:** read Spec 0029 from the file.
+2. **If the implementation contradicts Spec 0029:** the implementation is wrong. Fix the code, not the spec.
+3. **Previous specs are SUPERSEDED for container tracking:** Specs 0001, 0002, 0003, 0005, 0009, 0011 are historical context only. Spec 0027 (ETA handover) is complementary but its display_eta query-time computation is simplified by Spec 0029.
+
+---
+
 ## RULE 0 — SPEC 0026 IS THE MILESTONE AUTHORITY (non-negotiable)
 
 Spec 0026 (fleetcraft-specs/0026-fleetcraft-milestones-spec.md) is the SINGLE SOURCE OF TRUTH for the dispatch milestone lifecycle. It defines:
