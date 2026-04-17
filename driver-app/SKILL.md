@@ -90,6 +90,15 @@ Step 3 modes:
 - chassis_number NOT NULL + pool → streamlined (read-only, 5 photos required)
 - chassis_number NOT NULL + tenant → auto-skip (no photos, auto-advance)
 
+### Implementation notes (aligned April 2026)
+- `buildMilestoneList` returns 14 items (steps 1-6, 8-15). Steps 0, 7, 16 excluded.
+- Auto milestones (2, 8, 9, 13) are non-tappable — fire via BackgroundServices GPS detection
+- Step 16 removed from UI — auto-fires server-side when step 15 completes
+- `NEXT_MILESTONE` has no `chassis_returned` entry — prevents manual "Complete" tap
+- PARKED milestones removed from `MILESTONE_ORDER` and `NEXT_MILESTONE` (`in_transit_parked`, `in_transit_parked_return`). Still in `DispatchStatus` type union for backward compat with old dispatches.
+- `MILESTONE_ORDER` has 12 entries (manual tappable steps only). Auto steps fire independently.
+- chassis_number NOT NULL + tenant → auto-skip (no photos, auto-advance)
+
 ### Rules:
 - Each milestone tap captures `lat`, `lng`, `occurred_at` — no exceptions
 - GPS + timestamp on EVERY milestone via one-shot location request
@@ -594,6 +603,8 @@ Terminal areas and rural delivery locations often have poor cellular coverage. T
 8. **GPS stops when driver leaves load screen:** The #1 production GPS bug (April 2026). If `useGpsTracking` is called inside a screen component (`[id].tsx`), React cleanup calls `stopLocationUpdatesAsync` on unmount. GPS dies silently — milestones still work (one-shot `getCurrentPositionAsync`) but continuous tracking stops. Fix: GPS MUST live at app root level (`components/BackgroundServices.tsx`), never inside a screen. This was the root cause of 3–4 hour gaps in `driver_positions` traced during the Spec 0013 v2 rollout. Detect with: `SELECT now() - max(recorded_at) FROM driver_positions WHERE driver_id = $1` — if > 5 min with an active dispatch, the phone is silent.
 
 9. **ETA polling stops when driver leaves load screen:** Same root cause as #8. `useEtaPolling` was inside `[id].tsx`. Screen unmount killed the timer. Fix: ETA polling also lives at app root (`BackgroundServices`), ETA state lifted into `DispatchContext`.
+
+10. **"Complete" button fires after auto-complete (Spec 0026).** If the app still has a manual "Complete" button AND the backend auto-chains step 16 on step 15, double-firing can cause a 409 or state confusion. Fix: remove the Complete button entirely. `NEXT_MILESTONE` has no `chassis_returned` entry. Step 16 is server-side only. The app detects `status='completed'` via poll/refresh and shows the completion summary card.
 
 ---
 
