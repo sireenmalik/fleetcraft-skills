@@ -239,7 +239,7 @@ ALTER TABLE containers ADD CONSTRAINT chk_ui_status CHECK (ui_status IN (
 | Column | Value | Rationale |
 |--------|-------|-----------|
 | `data_source` | `'direct'` | Marks origin — skips FTU sync, skips AIS enrichment |
-| `ui_status` | `'AT_PORT'` | Container is physically at the terminal at creation |
+| `ui_status` | `'AVAILABLE'` | Container is physically at the terminal at creation (Spec 0029) |
 | `user_status` | `'active'` | Eligible for dispatch |
 | `pod_discharged_at` | `NOW()` | Anchors detention calculations; direct-add has no FTU webhook to populate this |
 | `vessel_name` | `'Direct Request'` | Synthetic vessel used for grouping in dashboards; no AIS/FTU enrichment applies |
@@ -530,9 +530,10 @@ The geofence columns were written correctly by the milestone handler but not ret
 When a dispatch is cancelled or deleted, the cancel endpoint must reset these container columns:
 - `pod_full_out_at` → NULL
 - `empty_terminated_at` → NULL
-- `ui_status` → `'AT_PORT'` (if `pod_discharged_at` exists) or previous state
+- `ui_status` → `'AVAILABLE'` (if `pod_discharged_at` exists) or previous state (Spec 0029 — was AT_PORT)
 - `status` / `current_status` → `'discharged'` (if `pod_discharged_at` exists) or previous state
 - `available_for_pickup` → `true` (if discharged)
+- `pod_discharged_at` must NOT be left NULL for DISCHARGED containers (deploy lesson: grid DISCHGD column reads this)
 - `updated_at` → NOW()
 
 The container reverts to its pre-dispatch state based on FTU data that still exists (`pod_discharged_at`, `pod_arrival`).

@@ -165,7 +165,7 @@ PROPS:          { containerNumber: string, orgId: string, findteuShipmentId: str
 Define the exact rules, not prose descriptions:
 
 ```
-RULE 1: Only archive containers where ui_status IN ('EMPTY_RETURNED', 'OUT_FOR_DELIVERY')
+RULE 1: Only archive containers where ui_status IN ('RETURNING', 'COMPLETED') — Spec 0029 (was EMPTY_RETURNED, OUT_FOR_DELIVERY)
 RULE 2: Auto-archive triggers when completed_at < NOW() - INTERVAL '24 hours'
 RULE 3: Manual archive skips the 24-hour wait — archives immediately
 RULE 4: FTU unregister is called by manual archive handler, NOT by auto-archive

@@ -326,7 +326,7 @@ Restore → POST /containers/restore
 - `ftu-tracker.js` is KILLED — its cache refresh logic is now in `vwc-sync.js`
 - Webhooks arrive at Fleet API → SQLite → Postgres via container-sync
 - FTU account #14978
-- **Exception:** Direct-add containers (`data_source = 'direct'`) bypass FTU entirely — no registration, no webhooks, no unregistration. They are added via `POST /api/containers/quick-add` directly to Postgres as AT_PORT.
+- **Exception:** Direct-add containers (`data_source = 'direct'`) bypass FTU entirely — no registration, no webhooks, no unregistration. They are added via `POST /api/containers/quick-add` directly to Postgres as AVAILABLE (Spec 0029 — was AT_PORT).
 
 ### Deactivated System
 - **T49 (Terminal 49)** — NEVER reference `t49-container-tracker.js` as active
@@ -703,18 +703,19 @@ ETA is determined by `ui_status`. No fallback chains. One source per status:
 | AT_BERTH | "At Berth" | AIS nav_status |
 | Ranks 6-18 | null | Past ETA phase |
 
-### AIS Handover — vwc-sync status override
+### AIS Status Writes — vwc-sync (Spec 0029)
 
-When vwc-sync detects a vessel moored inside a terminal geofence, it checks all IN_TRANSIT containers on that vessel:
-- Override `ui_status` to `'AT_PORT'` in Postgres directly (not SQLite)
-- Set `terminal_name` and `terminal_code` from geofence match
-- This is the ONLY case where vwc-sync writes to Postgres containers table
-- The timestamp guard in container-sync ensures SQLite won't overwrite this
-- Log: "AIS handover: {container} on {vessel} → AT_PORT at {terminal}"
+vwc-sync uses haversine distance to `terminals` table (NOT pointInPolygon against geofences):
+- Moored + <1nm → AT_BERTH, SOG≤1 + <5nm → AT_ANCHORAGE, SOG>1 + <20nm + headingWA → APPROACHING
+- Writes AIS ocean statuses (ranks 2-5) to **SQLite** containers, NOT Postgres directly
+- container-sync bridges to Postgres with forward-only guard
+- **Deploy lesson:** `terminals` table uses column `terminal_name` (not `name`) and has no `firms_code` column
+- Log: "AIS → SQLite: {vessel} → {status} ({count} containers)"
 
 ### Container status values
-- `ui_status` values are FTU-mapped: `IN_TRANSIT`, `AT_PORT`, `OUT_FOR_DELIVERY`, `EMPTY_RETURNED`
-- Dispatch-ready containers: `ui_status = 'AT_PORT'` AND `user_status = 'active'` — both conditions required
+- `ui_status` has 18 values (Spec 0029). Old values (AT_PORT, OUT_FOR_DELIVERY, EMPTY_RETURNED) no longer valid.
+- Dispatch-ready containers: `ui_status IN ('AVAILABLE', 'DISCHARGED')` AND `user_status = 'active'` — both conditions required
+- Dispatch button in frontend checks `AVAILABLE || DISCHARGED` (deploy lesson: was AT_PORT, invisible after migration)
 
 ---
 
@@ -735,7 +736,7 @@ These specific mistakes have caused production regressions:
 11. **Empty string FK values:** Frontend may send "" instead of null for optional FK fields (customer_id, driver_id, truck_id, chassis_id). Postgres treats "" as non-null, fails FK check. Always validate UUID format before INSERT. Use a helper like `uuidOrNull(value)` that returns null for empty strings, "undefined", "null", non-UUID strings, and actual null/undefined. Applied to POST /api/dispatches and any endpoint that accepts optional FK references.
 12. **FTU completed=true is NOT an archive trigger.** FTU sends `completed=true` when it stops tracking — this can happen at vessel arrival, discharge, or any time. It does NOT mean the business cycle is done. The business cycle ends ONLY when the driver completes step 25 (empty return) and `dispatches.completed_at` is set. The webhook handler must NEVER auto-archive on FTU `completed=true`. Auto-archive triggers ONLY from container-sync.js `archiveCompletedDispatches()` which checks `dispatches.completed_at` + 24h.
 13. **Cross-layer column gap.** Adding a column to one layer (e.g., SQLite) without adding it to container-sync's column list means the data never reaches Postgres. Always trace new fields through the Cross-Layer Impact Checklist in database/SKILL.md. The `terminal_code` field was added to SQLite and vwc-sync but missing from container-sync — data stayed in SQLite, dispatch creation couldn't find it, geofences never embedded.
-14. **AIS-FTU handover lag.** Vessel moored at terminal but FTU still reports IN_TRANSIT. vwc-sync overrides ui_status to AT_PORT based on AIS moored + terminal geofence. FTU discharge data arrives later and enriches the record without overriding AT_PORT.
+14. **AIS-FTU handover lag.** Vessel moored at terminal but FTU still reports IN_TRANSIT. vwc-sync writes AT_BERTH to SQLite (Spec 0029), container-sync bridges to Postgres with forward-only guard. FTU discharge data arrives later and enriches the record.
 15. **AIS ETA wrong for transit vessels.** AIS destination shows a non-WA port (transit or next voyage). AIS ETA calculates distance to wrong port. Always prefer FTU pod_eta for container ETA. AIS ETA only valid when vessel is heading directly to WA as final destination.
 16. **API SELECT doesn't return new columns.** Adding a column to a table and writing to it in one endpoint doesn't mean it's returned by read endpoints. When adding new columns to dispatches (queue_start_at, pickup_geofences, etc.), you must update EVERY SELECT that reads from that table — GET /dispatches, GET /api/dispatches/:id, GET /api/driver/loads, GET /api/driver/history. The geofence detention card showed blank because the write path worked but the read path didn't return the new columns.
 17. **Postgres numeric comes as string via JSON.** Postgres numeric/decimal columns return as strings in JSON API responses (e.g., "12.50" not 12.50). Frontend code calling .toFixed() on these values crashes with "toFixed is not a function". Always wrap in Number() first: `Number(value).toFixed(2)`. This crashed the entire Container Tracking page via chassis.daily_rate.

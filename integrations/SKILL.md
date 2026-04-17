@@ -401,18 +401,20 @@ FTU job STARTS when: vessel moored OR FTU sends discharge webhook, whichever com
 
 **Handover rules:**
 
-1. When AIS confirms vessel moored at terminal:
-   - Container ui_status overrides to AT_PORT (even if FTU still says IN_TRANSIT)
-   - terminal_name and terminal_code set from geofence match
+1. When AIS confirms vessel moored at terminal (Spec 0029: haversine < 1nm):
+   - vwc-sync writes AT_BERTH to **SQLite** (NOT Postgres directly)
+   - container-sync bridges to Postgres with forward-only guard
+   - terminal_name and terminal_code set from nearest terminal match
    - ETA = 0 (vessel is already here)
-   - Log: "AIS handover: {vessel} moored at {terminal}, {container} → AT_PORT"
+   - Log: "AIS → SQLite: {vessel} → AT_BERTH ({count} containers at {terminal})"
 
 2. When FTU sends discharge before vessel moored (FTU is faster):
-   - Trust FTU — container is AT_PORT
-   - AIS catches up later when vessel moors
+   - Trust FTU — container moves to DISCHARGED (rank 6)
+   - AIS catches up later when vessel moors → AT_BERTH (rank 5), blocked by forward-only guard
 
 3. When FTU is silent 48h+ after vessel moored:
-   - Container stays AT_PORT (from AIS override)
+   - Container stays AT_BERTH (from AIS write)
+   - Only FTU can advance to DISCHARGED (rank 6) — AIS cannot tell when a specific container was unloaded
    - Log warning: "FTU lag: {vessel} moored at {terminal} but no discharge data after 48h"
 
 4. When AIS and FTU disagree on terminal:
@@ -423,9 +425,9 @@ FTU job STARTS when: vessel moored OR FTU sends discharge webhook, whichever com
 
 | AIS | FTU | Result |
 |-----|-----|--------|
-| Moored at terminal | Discharged | Both agree. AT_PORT. Normal. |
-| Moored at terminal | Still IN_TRANSIT | Override to AT_PORT. Wait for FTU. |
-| No position | Discharged | Trust FTU. AT_PORT. |
+| Moored at terminal | Discharged | AT_BERTH then DISCHARGED. Forward-only. |
+| Moored at terminal | Still IN_TRANSIT | AT_BERTH in SQLite, bridges to Postgres. Wait for FTU DISCHARGED. |
+| No position | Discharged | Trust FTU. DISCHARGED. |
 | No position | No data | Stay at last known status. |
 | Moored at terminal A | Discharged at terminal B | FTU terminal wins. |
 

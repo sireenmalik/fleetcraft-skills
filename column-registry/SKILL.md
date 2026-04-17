@@ -199,10 +199,10 @@ Single writer: `vwc-sync.js` (data columns) + `dispatcher-orchestrator.js` (aler
 | mmsi | vwc-sync | SQLite vessel_mmsi | AIS identity |
 | imo | vwc-sync | SQLite vessel_imo | AIS identity |
 | container_count | vwc-sync | COUNT(*) | all active containers |
-| on_vessel_count | vwc-sync | ui_status = 'IN_TRANSIT' | |
-| at_yard_count | vwc-sync | ui_status = 'AT_PORT' | |
-| out_for_delivery_count | vwc-sync | ui_status = 'OUT_FOR_DELIVERY' | |
-| empty_returned_count | vwc-sync | ui_status = 'EMPTY_RETURNED' | |
+| on_vessel_count | vwc-sync | ui_status IN (LOADED_AT_ORIGIN, IN_TRANSIT, APPROACHING, AT_ANCHORAGE, AT_BERTH) | Spec 0029: ocean phase ranks 1-5 |
+| at_yard_count | vwc-sync | ui_status IN (DISCHARGED, ON_HOLD, AVAILABLE) | Spec 0029: terminal phase ranks 6-8 |
+| out_for_delivery_count | vwc-sync | ui_status IN (ASSIGNED..DELIVERED) | Spec 0029: dispatch+delivery ranks 9-16 |
+| empty_returned_count | vwc-sync | ui_status IN (RETURNING, COMPLETED) | Spec 0029: return phase ranks 17-18 |
 | urgent_count | vwc-sync | LFD within 7 days | |
 | holds_count | vwc-sync | any hold = true | |
 | available_count | vwc-sync | available_for_pickup = 1 | |
