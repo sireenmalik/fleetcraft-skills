@@ -14,6 +14,37 @@ description: >
 
 ---
 
+## RULE 0 — SPEC 0026 IS THE MILESTONE AUTHORITY (non-negotiable)
+
+Spec 0026 (fleetcraft-specs/0026-fleetcraft-milestones-spec.md) is the SINGLE SOURCE OF TRUTH for the dispatch milestone lifecycle. It defines:
+
+- The 17 steps (0-16), their sequence, their DB columns, their triggers
+- The dashboard grid column order (28 columns, 16 milestone + 12 metadata)
+- Step 3 three-mode chassis logic
+- Auto-detect triggers (steps 2, 8, 9, 13)
+- Auto-complete rule (step 16 fires on step 15)
+- Customer notification trigger (step 9, NOT step 10)
+
+### Enforcement:
+
+1. **Before ANY dispatch/milestone/grid code change:** read Spec 0026 from GitHub MCP. Not from memory. Not from conversation context. From the file.
+
+2. **If a Code prompt references milestones, grid columns, dispatch statuses, or timestamp columns:** the prompt MUST say "per Spec 0026" and the implementation MUST match the spec table exactly.
+
+3. **If the implementation contradicts Spec 0026:** the implementation is wrong. Fix the code, not the spec. If the spec needs updating, update the spec FIRST, get Malik's approval, THEN change code.
+
+4. **Previous specs are SUPERSEDED for milestone logic:** Specs 0009, 0010, 0013a, 0013b, 0014, 0021 defined earlier versions of the milestone sequence. They are historical context only. Spec 0026 is the canonical reference. If any older spec contradicts 0026, ignore the older spec.
+
+5. **The grid column table (28 columns) is a CONTRACT:**
+   - Column IDs cannot be renamed without updating Spec 0026 + driver app + backend
+   - Columns cannot be added or removed without updating Spec 0026 first
+   - Column order in the grid must match the spec
+   - localStorage key must be bumped on any column change
+
+6. **E2E tests enforce the spec.** The e2e test file for 0026 validates every DB column exists, every milestone handler writes the correct timestamp, auto-complete fires on step 15, and customer notification fires on step 9. If e2e fails, the deploy is blocked.
+
+---
+
 ## IMMUTABLE RULE: Read skills before every action
 
 Before writing ANY prompt, code change, architecture decision, or troubleshooting step:

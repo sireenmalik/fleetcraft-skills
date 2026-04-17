@@ -180,6 +180,7 @@ Driver-app-v2 introduces authoritative trip stats computed at dispatch completio
 | `trip_total_minutes` | INTEGER | `completed_at − en_route_pickup_at` in minutes. |
 | `trip_computed_at` | TIMESTAMPTZ | Latest compute timestamp. Idempotent — repeat calls overwrite. |
 | `chassis_owner` | TEXT (default `'pool'`) | `'pool'` → rental chassis (DCLI/TRAC/Flexi-Van), full photo inspection required. `'tenant'` → company-owned, inspection skippable. Set at dispatch creation from truck/chassis record. |
+| `delivery_eta_triggered_at` | TIMESTAMPTZ | Spec 0026 step 9. Delivery geofence trigger. Customer notification fires here. Separate from `delivery_arrived_at` (step 10). FROZEN — written once. Migration 026. |
 
 **Rule — compute-trip-stats is idempotent and driver-authenticated.** Endpoint uses `requireAuth` (driver JWT), reads `driver_positions` between `en_route_pickup_at` and `completed_at`, and overwrites all five columns in one query. Safe to call twice (latest wins). Called fire-and-forget by the app on the final milestone — HTTP failure doesn't block completion.
 

@@ -58,22 +58,37 @@ at_return_terminal → chassis_returned → returned → completed
 (cancelled can happen from any status)
 ```
 
-### Milestone flow the driver walks through (15 tappable steps):
+### Milestone Flow — Spec 0026 (Milestones Lifecycle v3)
 
-```
-en_route_pickup → at_terminal (Ingate) → chassis_info →
-container_loaded → gate_out → in_transit_parked → en_route_delivery →
-at_delivery → pod_captured → delivered →
-empty_en_route_return → in_transit_parked_return →
-at_return_terminal → chassis_returned → completed
-```
+**AUTHORITY: fleetcraft-specs/0026-fleetcraft-milestones-spec.md**
+Read this spec before any milestone code change. No exceptions.
 
-> **Note (Spec 0025, 2026-04-16):** The v1 state machine (`MILESTONE_ORDER` + `NEXT_MILESTONE` in `constants/index.ts`) was aligned with the v2 `MilestoneList` visual. The order is now **ingate before chassis**, matching real-world PCT/T18 flow — drivers pass the gate booth first, then find a parking spot and perform chassis inspection. The backend is permissive (no transition guard in `routes/driver.js`), so this is a pure client-side change. `POSITION_BY_STATUS` in `MilestoneList.tsx` was not updated in Spec 0025 — some status → milestone-index mappings may be off by one until Spec 0021 Phase 2 ships the full v2 UI.
+17 steps (0-16). 4 auto GPS. 8 manual+photo. 4 manual-only. 1 computed.
 
-`in_queue` is NOT a tappable milestone. Queue time is calculated:
-- Primary: `queue_start_at` (geofence fire) to `queue_stop_at` (outgate EIR photo)
-- Fallback: `terminal_ingate_at` (Ingate tap) to `pickup_completed_at` (Gate Out tap)
-- The `in_queue` status exists in the database CHECK constraint for backwards compatibility but is never set by the driver app.
+| # | Step | DB field | Type |
+|---|------|----------|------|
+| 0 | Accept/Reject | status: assigned/rejected | manual |
+| 1 | Start | en_route_pickup_at | manual |
+| 2 | Geofence | queue_start_at | auto GPS |
+| 3 | Chassis info | chassis_info_at | manual+photo (3 modes) |
+| 4 | Ingate | pickup_arrived_at | manual+photo |
+| 5 | Loaded | loaded_at | manual+photo |
+| 6 | Outgate | pickup_completed_at | manual+photo |
+| 7 | Queue | computed | computed |
+| 8 | En route delivery | en_route_delivery_at | auto GPS |
+| 9 | Delivery ETA | delivery_eta_triggered_at | auto GPS |
+| 10 | At delivery | delivery_arrived_at | manual+photo |
+| 11 | POD | delivery_completed_at | manual+photo |
+| 12 | Delivered | actual_delivery_at | manual |
+| 13 | En route return | en_route_return_at | auto GPS |
+| 14 | At return terminal | return_arrived_at | manual+photo |
+| 15 | Chassis returned | return_completed_at | manual+photo |
+| 16 | Complete | completed_at | auto (fires on step 15) |
+
+Step 3 modes:
+- chassis_number NULL → full modal (type number, select pool, 5 photos)
+- chassis_number NOT NULL + pool → streamlined (read-only, 5 photos required)
+- chassis_number NOT NULL + tenant → auto-skip (no photos, auto-advance)
 
 ### Rules:
 - Each milestone tap captures `lat`, `lng`, `occurred_at` — no exceptions

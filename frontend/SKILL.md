@@ -451,24 +451,71 @@ without it, positions upload with `dispatch_id = NULL` and breadcrumbs can't be 
 
 ---
 
-## 12. Container Grid — TanStack Table
+## 12. Container Grid — TanStack Table (Spec 0026)
 
-> **Added:** 2026-04-13 (Spec 0014)
+> **Updated:** 2026-04-16 (Spec 0026 — Milestones Lifecycle v3)
+
+**AUTHORITY: fleetcraft-specs/0026-fleetcraft-milestones-spec.md**
 
 The Container Tracking page uses `@tanstack/react-table` for the main data table.
 
 ### Key files
-- `src/app/components/container/ContainerGrid.tsx` — TanStack Table with 29 columns
+- `src/app/components/container/ContainerGrid.tsx` — TanStack Table with 28 columns
 - `src/app/components/container/ColumnVisibilityMenu.tsx` — column visibility dropdown
 - `src/app/components/container/gridUtils.ts` — shared column width defaults and format helpers
 - `src/app/hooks/usePersistedColumnState.ts` — localStorage persistence
 
+### Grid Column Order — Spec 0026 (28 columns)
+
+This table is a CONTRACT. Adding, removing, renaming, or reordering columns requires updating Spec 0026 FIRST.
+
+| Pos | Column ID | Header | DB field | Group |
+|-----|-----------|--------|----------|-------|
+| 1 | container | CONTAINER | container_number | OCEAN |
+| 2 | status | STATUS | ui_status | OCEAN |
+| 3 | vessel | VESSEL | vessel_name | OCEAN |
+| 4 | eta | ETA | pod_eta | OCEAN |
+| 5 | discharged | DISCHGD | pod_discharged_at | TERMINAL |
+| 6 | holds | HOLDS | holds/customs/freight/terminal | TERMINAL |
+| 7 | lfd | LFD | last_free_day | TERMINAL |
+| 8 | dispatched | DSPTCHD | created_at | DISPATCH |
+| 9 | driver | DRIVER | driver_name | DISPATCH |
+| 10 | truck | TRUCK | truck_name | DISPATCH |
+| 11 | en_route_term | EN ROUTE | en_route_pickup_at | DISPATCH |
+| 12 | geofence | GEOFENCE | queue_start_at | DISPATCH |
+| 13 | chassis_info | CHSS INFO | chassis_info_at | DISPATCH |
+| 14 | ingate | INGATE | pickup_arrived_at | DISPATCH |
+| 15 | loaded | LOADED | loaded_at | DISPATCH |
+| 16 | outgate | OUTGATE | pickup_completed_at | DISPATCH |
+| 17 | queue | QUEUE | computed: outgate − min(geofence, ingate) | DISPATCH |
+| 18 | en_route | EN RT DLV | en_route_delivery_at | DELIVERY |
+| 19 | delivery_eta | DELIVERY ETA | delivery_eta_triggered_at | DELIVERY |
+| 20 | at_deliv | AT DLVRY | delivery_arrived_at | DELIVERY |
+| 21 | pod_field | POD | delivery_completed_at | DELIVERY |
+| 22 | delivered | DLVRD | actual_delivery_at | DELIVERY |
+| 23 | complete | COMPLETE | completed_at | DELIVERY |
+| 24 | en_route_rtn | EN RT RTN | en_route_return_at | RETURN |
+| 25 | at_term_rtn | AT TRM RTN | return_arrived_at | RETURN |
+| 26 | chassis_rtn | CHSS RTN | return_completed_at | RETURN |
+| 27 | empty_in | EMPTY IN | empty_terminated_at | RETURN |
+| 28 | actions | ACTIONS | — | ACTIONS |
+
+**CONTAINER, STATUS, ACTIONS are pinned — cannot be hidden.**
+**empty_in is FTU lifecycle data, not a Spec 0026 driver milestone.**
+
+Removed columns (do NOT re-add):
+- chassis (CHASSIS) — merged into CHSS INFO detail modal
+- parked (PARKED) — Spec 0026 removed this milestone
+- parked_rtn (PRKD RTN) — Spec 0026 removed this milestone
+
+localStorage key: `fc-container-grid-v3` (bumped on any column change)
+
 ### Rules
 - CONTAINER and STATUS are always pinned left. ACTIONS is always pinned right. None of these can be hidden.
-- RETURN group (5 columns) is hidden by default.
-- Column widths and visibility persist to localStorage key `fc-container-grid-v2` (bump version suffix on breaking schema changes).
+- RETURN group (4 columns) is hidden by default.
+- Column widths and visibility persist to localStorage key `fc-container-grid-v3`.
 - All cell rendering reuses existing format functions. Do not duplicate formatting logic.
-- When adding a new column: add to ContainerGrid.tsx column defs AND update DEFAULT_VISIBILITY and DEFAULT_SIZING in usePersistedColumnState.ts.
+- When adding a new column: update Spec 0026 FIRST, then add to ContainerGrid.tsx column defs AND update DEFAULT_VISIBILITY and DEFAULT_SIZING in usePersistedColumnState.ts AND add to COLUMN_GROUPS in gridUtils.ts.
 - The old HTML `<table>` markup is gone. Do not recreate it. All table rendering goes through TanStack.
 
 ### Hard-won formatting rules
@@ -494,7 +541,7 @@ The Container Tracking page uses `@tanstack/react-table` for the main data table
 
 **localStorage schema versioning:** Key by `fc-container-grid-v{N}`. On read, validate every saved key against current column defs and drop unknowns. Bump version suffix on breaking column key changes to force clean defaults. Always provide "Reset to defaults" in the UI.
 
-**Column keys are a contract:** Column IDs match dispatch field names written by the driver app (en_route_term, chassis_info, ingate, loaded, outgate, etc.). Visual order can change freely. Column keys cannot be renamed without a coordinated driver-app + backend migration. Renaming an ID silently drops a user's saved customization.
+**Column keys are a contract per Spec 0026:** Column IDs match dispatch field names written by the driver app (en_route_term, chassis_info, ingate, loaded, outgate, etc.). Visual order can change freely. Column keys cannot be renamed without updating Spec 0026 + driver-app + backend. Renaming an ID silently drops a user's saved customization.
 
 **Build vs deploy:** `npm run build` creates `dist/` locally. The droplet serves the previous bundle until `scp` overwrites it. Before debugging styling complaints, verify the console hash matches the latest local build.
 

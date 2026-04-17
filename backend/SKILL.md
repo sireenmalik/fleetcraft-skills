@@ -162,6 +162,19 @@ Every data domain has exactly ONE writer. No exceptions.
 ### The Rule
 **Writers write to their domain only. Readers never write.** If you find yourself adding a write to a reader, stop — you are violating CQRS.
 
+### Milestone Handler — Spec 0026
+
+Authority: fleetcraft-specs/0026-fleetcraft-milestones-spec.md
+
+POST /api/driver/loads/:id/milestone validates against Spec 0026.
+
+Key server-side rules:
+- Step 9: write `delivery_eta_triggered_at` (NOT `delivery_arrived_at`), fire customer "arriving" notification
+- Step 15: write `return_completed_at`, then immediately set `completed_at = NOW()` (step 16 auto-complete)
+- Step 16: trigger `POST /api/dispatches/:id/compute-trip-stats`
+- Step 3 skip: if `chassis_owner='tenant'`, auto-advance without photo requirement
+- Reject: set `status='rejected'`, clear `driver_id`, set `rejected_at` + `reject_reason`
+
 ---
 
 ## 2. The user_status Guard (CRITICAL)
