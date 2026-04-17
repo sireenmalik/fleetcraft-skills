@@ -658,16 +658,21 @@ Dismissed/held containers (`user_status != 'active'`) do not count — they don'
 
 ```
 IF vessel moored at terminal:
-  eta_hours = 0, eta_source = 'MOORED'
+  eta_hours = 0, eta_source = 'MOORED', display_eta = 'Moored'
 ELSE IF SOG <= 1 AND distance_nm < 5:
-  eta_hours = 0, eta_source = 'ARRIVING' (vessel at port, waiting for berth)
-ELSE IF FTU pod_eta exists for this vessel's containers:
-  eta_hours = (pod_eta - now) in hours, eta_source = 'FTU'
+  eta_source = 'ANCHORAGE', display_eta = 'At Anchorage · N.N nm'
+  (vessel in port area, waiting for berth. Industry term for holding
+   position near port. SOG=0 causes AIS formula to divide-by-zero,
+   so without this guard the chain falls to stale FTU.)
 ELSE IF isHeadingToWA(destination) AND SOG > 1:
   eta_hours = distance_nm / SOG, eta_source = 'AIS'
+ELSE IF FTU pod_eta exists for this vessel's containers:
+  eta_hours = (pod_eta - now) in hours, eta_source = 'FTU'
 ELSE:
   eta_hours = null, eta_source = null
 ```
+
+**Note on AIS nav_status accuracy:** Vessels frequently report `Under way using engine` even when stationary at anchorage. The ANCHORAGE check uses SOG + distance (objective measurements) rather than self-reported nav_status.
 
 ### ETA Propagation to Container Grid (Spec 0027)
 

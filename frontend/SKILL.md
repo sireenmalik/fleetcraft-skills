@@ -512,7 +512,19 @@ localStorage key: `fc-container-grid-v4` (bumped on any column change)
 
 ### ETA Column — Priority Chain (Spec 0027)
 
-Grid ETA column reads `display_eta` (computed server-side from VWC LEFT JOIN), NOT raw `pod_eta`. Fallback: `display_eta` > `pod_eta` > "—". Source badges: AIS (purple), Arriving (amber), FTU (blue), Moored (green). ARRIVING = vessel within 5nm at SOG ≤ 1 (at port, waiting for berth — catches the gap between arrival and mooring). AT_PORT/OFD/EMPTY_RETURNED containers show no ETA (past the ETA phase). `display_eta` is NOT a stored column — computed at query time via LEFT JOIN `vessels_with_containers`. Do NOT add a `display_eta` column to the containers table.
+Grid ETA column reads `display_eta` (computed server-side from VWC LEFT JOIN), NOT raw `pod_eta`. Fallback: `display_eta` > `pod_eta` > "—".
+
+**ETA source badges (Spec 0027):**
+
+| eta_source | Badge text | Color | Meaning |
+|---|---|---|---|
+| `MOORED` | MOORED | green `#22c55e` | Vessel tied up at berth |
+| `ANCHORAGE` | ANCHORAGE | amber `#f59e0b` | "At Anchorage · N.N nm" — vessel in port area, waiting for berth. Industry term. SOG ≤ 1, distance < 5nm. |
+| `AIS` | AIS | purple `#8b5cf6` | Live computed: distance_nm / SOG |
+| `FTU` | FTU | blue `#3b82f6` | Carrier-published estimate (often stale) |
+| `null` | — | — | No ETA or container past ETA phase (AT_PORT/OFD/EMPTY_RETURNED) |
+
+`display_eta` is NOT a stored column — computed at query time via LEFT JOIN `vessels_with_containers`. Do NOT add a `display_eta` column to the containers table.
 
 ### Rules
 - CONTAINER and STATUS are always pinned left. ACTIONS is always pinned right. None of these can be hidden.
