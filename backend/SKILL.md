@@ -162,18 +162,31 @@ Every data domain has exactly ONE writer. No exceptions.
 ### The Rule
 **Writers write to their domain only. Readers never write.** If you find yourself adding a write to a reader, stop — you are violating CQRS.
 
-### Milestone Handler — Spec 0026
+### Milestone Handler — Spec 0026 (complete 17-step mapping)
 
 Authority: fleetcraft-specs/0026-fleetcraft-milestones-spec.md
 
-POST /api/driver/loads/:id/milestone validates against Spec 0026.
+POST /api/driver/loads/:id/milestone in `routes/driver.js`.
 
-Key server-side rules:
-- Step 9: write `delivery_eta_triggered_at` (NOT `delivery_arrived_at`), fire customer "arriving" notification
-- Step 15: write `return_completed_at`, then immediately set `completed_at = NOW()` (step 16 auto-complete)
-- Step 16: trigger `POST /api/dispatches/:id/compute-trip-stats`
-- Step 3 skip: if `chassis_owner='tenant'`, auto-advance without photo requirement
-- Reject: set `status='rejected'`, clear `driver_id`, set `rejected_at` + `reject_reason`
+| Step | milestone_type sent | DB column written | Status set to | Side effects |
+|---|---|---|---|---|
+| 0 | (separate reject endpoint) | `rejected_at`, `reject_reason` | `rejected` | Driver removed, dispatch available for reassign |
+| 1 | `en_route_pickup` | `en_route_pickup_at` (timestampMap) + `en_route_terminal_at` (backward compat in GPS handler) + `origin_lat/lng` | `en_route_pickup` | Route recompute via HERE. One-active-trip guard (409). |
+| 2 | `terminal_area_arrived` | `queue_start_at` (NULL guard) | unchanged | Geofence auto-trigger. Status stays `en_route_pickup`. |
+| 3 | `chassis_info` | `chassis_info_at` + `chassis_photo_urls` | `chassis_info_required` | Chassis auto-checkout (Spec 0023). Skip if `chassis_owner='tenant'` (driver-side). |
+| 4 | `at_terminal` | `pickup_arrived_at` + `terminal_ingate_at` + `ingate_photo_url` | `at_terminal` | |
+| 5 | `container_loaded` | `loaded_at` + `seal_photo_urls` | `loaded` | |
+| 6 | `gate_out` | `pickup_completed_at` + `queue_stop_at` + `queue_minutes` + `road_wait_minutes` + `terminal_wait_minutes` + `outgate_photo_url` | `gate_out` | Container → OUT_FOR_DELIVERY |
+| 7 | (computed) | — | — | Frontend: `pickup_completed_at − min(queue_start_at, pickup_arrived_at)` |
+| 8 | `gate_out_detected` | `en_route_delivery_at` | `en_route_delivery` | Auto-detect (distance 0.5mi, 60s). Status guard: only from gate_out/loaded/container_loaded/in_transit_parked. Customer "en_route" notification fires. |
+| 9 | `delivery_area_arrived` | `delivery_eta_triggered_at` (NOT delivery_arrived_at) | unchanged | Geofence auto-trigger. Customer "arriving" notification fires. NULL guard. |
+| 10 | `at_delivery` | `delivery_arrived_at` + `delivery_arrival_photo_url` | `at_delivery` | Manual tap + photo. The real arrival. |
+| 11 | `pod_captured` | `delivery_completed_at` + `pod_photo_url` | `pod_captured` | |
+| 12 | `delivered` | `actual_delivery_at` | `delivered` | Customer "delivered" notification fires. |
+| 13 | `en_route_return_detected` | `en_route_return_at` | `empty_en_route_return` | Auto-detect (distance 0.5mi, 60s). Status guard: only from delivered/pod_captured/at_delivery. |
+| 14 | `at_return_terminal` | `return_arrived_at` + `return_photo_urls` | `at_return_terminal` | |
+| 15 | `chassis_returned` | `return_completed_at` | `chassis_returned` | Chassis auto-checkin (Spec 0023). **Then auto-fires step 16.** |
+| 16 | (auto on step 15) | `completed_at` | `completed` | Container → EMPTY_RETURNED. Trip stats compute fires. No driver tap. |
 
 ---
 
