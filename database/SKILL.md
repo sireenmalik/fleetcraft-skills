@@ -31,6 +31,7 @@ SQLite (container-registry.db)     PostgreSQL (fleetcraft_db)
                                      ├── driver_positions
                                      ├── alert_subscribers
                                      ├── alert_logs
+                                     ├── terminals (AIS distance detection)
                                      ├── geofences (planned)
                                      └── navigation_order
 ```
@@ -40,6 +41,12 @@ SQLite (container-registry.db)     PostgreSQL (fleetcraft_db)
 - **Postgres** is the source of truth for everything. container-sync.js pushes SQLite → Postgres every 30 seconds.
 - **Exception:** Direct-add containers (`data_source = 'direct'`) bypass SQLite entirely — written directly to Postgres via `POST /api/containers/quick-add`. container-sync never sees them. Direct-add containers have: `data_source='direct'`, `terminal_code` derived from `terminal_name` mapping (e.g., "PCT" → "PCT", "Husky Terminal" → "HUSKY").
 - Dispatches, drivers, trucks, chassis, events, exclusions — Postgres ONLY, no SQLite copy.
+
+### terminals table
+| terminals | Terminal locations with lat/lng for AIS distance detection |
+
+Columns: `terminal_code` (PK), `terminal_name`, `lat`, `lng`. 6 rows: FCTEST, HUSKY, PCT, T5, T18, WUT.
+Column is `terminal_name` (not `name`) — deploy lesson from Spec 0029.
 
 ---
 
@@ -188,65 +195,49 @@ Driver-app-v2 introduces authoritative trip stats computed at dispatch completio
 
 ---
 
-## 3. ui_status Values — Spec 0029 (THE BIBLE)
+## 3. ui_status Values — Spec 0029 (CANONICAL)
 
-**AUTHORITY: fleetcraft-specs/0029-container-tracking-alignment.md**
+containers.ui_status has 18 values with a forward-only rank. See Spec 0029 for full details.
 
-18 statuses. Single field. Forward-only rank. Old values (AT_PORT, OUT_FOR_DELIVERY, EMPTY_RETURNED) migrated by Spec 0029 migration.
+| Rank | ui_status | Phase | Owner | Badge |
+|------|-----------|-------|-------|-------|
+| 1 | LOADED_AT_ORIGIN | Ocean | FTU | blue |
+| 2 | IN_TRANSIT | Ocean | AIS | blue |
+| 3 | APPROACHING | Ocean | AIS | blue |
+| 4 | AT_ANCHORAGE | Ocean | AIS | amber |
+| 5 | AT_BERTH | Ocean | AIS | amber |
+| 6 | DISCHARGED | Terminal | FTU | yellow |
+| 7 | ON_HOLD | Terminal | FTU | red |
+| 8 | AVAILABLE | Terminal | FTU | green |
+| 9 | ASSIGNED | Dispatch | FleetCraft | orange |
+| 10 | ACCEPTED | Dispatch | Driver app | orange |
+| 11 | EN_ROUTE_PICKUP | Dispatch | Driver app | orange |
+| 12 | AT_TERMINAL | Dispatch | Driver app | orange |
+| 13 | GATE_OUT | Dispatch | Driver app | orange |
+| 14 | EN_ROUTE_DELIVERY | Delivery | Driver app | purple |
+| 15 | AT_DELIVERY | Delivery | Driver app | purple |
+| 16 | DELIVERED | Delivery | Driver app | green |
+| 17 | RETURNING | Return | Driver app | gray |
+| 18 | COMPLETED | Return | Driver app | green |
 
-| Rank | ui_status | Phase | Owner | Set by |
-|---|---|---|---|---|
-| 1 | `LOADED_AT_ORIGIN` | Ocean | FTU | FTU "Loaded on" event |
-| 2 | `IN_TRANSIT` | Ocean | AIS / FTU | AIS: SOG > 1 heading WA. FTU: registration fallback. |
-| 3 | `APPROACHING` | Ocean | AIS | distance < 20nm, SOG > 1 |
-| 4 | `AT_ANCHORAGE` | Ocean | AIS | SOG ≤ 1, distance < 5nm |
-| 5 | `AT_BERTH` | Ocean | AIS | Moored, distance < 1nm |
-| 6 | `DISCHARGED` | Terminal | FTU | FTU "Discharged" event (AIS→FTU handover) |
-| 7 | `ON_HOLD` | Terminal | FTU | customs/freight/terminal hold |
-| 8 | `AVAILABLE` | Terminal | FTU | available_for_pickup = true |
-| 9 | `ASSIGNED` | Dispatch | FleetCraft | POST /api/dispatches |
-| 10 | `ACCEPTED` | Dispatch | Driver app | Driver taps Accept |
-| 11 | `EN_ROUTE_PICKUP` | Dispatch | Driver app | Spec 0026 step 1 |
-| 12 | `AT_TERMINAL` | Dispatch | Driver app | Spec 0026 step 4 |
-| 13 | `GATE_OUT` | Dispatch | Driver app | Spec 0026 step 6 |
-| 14 | `EN_ROUTE_DELIVERY` | Delivery | Driver app | Spec 0026 step 8 |
-| 15 | `AT_DELIVERY` | Delivery | Driver app | Spec 0026 step 10 |
-| 16 | `DELIVERED` | Delivery | Driver app | Spec 0026 step 12 |
-| 17 | `RETURNING` | Return | Driver app | Spec 0026 step 13 |
-| 18 | `COMPLETED` | Return | Driver app | Spec 0026 step 16 (auto) |
+### Writers
+- **Ranks 1-8:** container-sync.js is the SOLE Postgres writer. FTU and AIS write to SQLite, container-sync bridges with forward-only guard.
+- **Ranks 9-18:** driver.js writes Postgres directly with its own forward-only guard.
+- vwc-sync does NOT write containers.ui_status to Postgres. It writes ocean statuses to SQLite only.
 
 ### Forward-only guard
-`status_rank($new) > status_rank($current)`. Two exceptions: ON_HOLD ↔ DISCHARGED (hold cleared), AVAILABLE → ON_HOLD (new hold placed).
+New rank must be > current rank. Two exceptions:
+- ON_HOLD (7) → DISCHARGED (6): hold cleared
+- AVAILABLE (8) → ON_HOLD (7): new hold placed
 
-### Dispatch eligibility
-Only containers where `ui_status IN ('AVAILABLE', 'DISCHARGED')` AND `user_status = 'active'` are dispatch-ready.
-
-### CHECK constraint
-```sql
-ALTER TABLE containers ADD CONSTRAINT chk_ui_status CHECK (ui_status IN (
-  'LOADED_AT_ORIGIN','IN_TRANSIT','APPROACHING','AT_ANCHORAGE','AT_BERTH',
-  'DISCHARGED','ON_HOLD','AVAILABLE',
-  'ASSIGNED','ACCEPTED','EN_ROUTE_PICKUP','AT_TERMINAL','GATE_OUT',
-  'EN_ROUTE_DELIVERY','AT_DELIVERY','DELIVERED',
-  'RETURNING','COMPLETED'
-));
-```
+### Dispatch creation guard
+POST /api/dispatches only allows ui_status IN ('AVAILABLE', 'DISCHARGED'). Rejects containers still on water (ranks 1-5) or already dispatched (ranks 9-18).
 
 ### Direct-add containers
+Quick-add endpoint sets ui_status = 'AVAILABLE' (rank 8). No ocean leg.
 
-`POST /api/containers/quick-add` creates containers that are already at the terminal — they bypass FTU vessel tracking entirely. Full default set at INSERT time:
-
-| Column | Value | Rationale |
-|--------|-------|-----------|
-| `data_source` | `'direct'` | Marks origin — skips FTU sync, skips AIS enrichment |
-| `ui_status` | `'AVAILABLE'` | Container is physically at the terminal at creation (Spec 0029) |
-| `user_status` | `'active'` | Eligible for dispatch |
-| `pod_discharged_at` | `NOW()` | Anchors detention calculations; direct-add has no FTU webhook to populate this |
-| `vessel_name` | `'Direct Request'` | Synthetic vessel used for grouping in dashboards; no AIS/FTU enrichment applies |
-| `terminal_code` | caller-supplied | Which terminal the container is at |
-| `available_for_pickup` | `true` | Container is ready for pickup |
-
-Because direct-add skips the normal FTU ingestion path, every timestamp that normally flows in from webhooks must be set synthetically at creation — otherwise downstream calculations (detention days, demurrage thresholds, dwell time) start from null and produce nonsense. The "Direct Request" vessel_name is intentional: it's the single grouping anchor so dashboards can render direct-add containers in vessel-grouped views alongside real vessels (see `/containers/vessels` — no IN_TRANSIT filter, so direct-add vessels show up).
+### Old values (REMOVED — do not use)
+AT_PORT, OUT_FOR_DELIVERY, EMPTY_RETURNED — migrated by Spec 0029. CHECK constraint enforces only the 18 values above.
 
 ---
 
