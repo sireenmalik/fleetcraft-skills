@@ -259,6 +259,14 @@ Rules:
 - Same-status writes are no-ops, not conflicts — only record when source status is genuinely different.
 - The guard stays as a safety net until the full architecture rewrite.
 
+### Chassis ownership_type auto-derivation (Spec 0028)
+
+`routes/chassis.js` POST and PATCH auto-derive `ownership_type` from `chassis_pool`:
+- pool='Own' → ownership_type='company_owned'
+- anything else → ownership_type='pool_rental'
+
+The values match the `chassis_ownership_type_check` CHECK constraint (`company_owned | company_leased | pool_rental`). The UI no longer exposes `ownership_type`, so any client-supplied value is overridden. The `chassis_chassis_pool_check` constraint was updated in migration 028 to include `'Own'`.
+
 ---
 
 ## 3. Container Archive Flow

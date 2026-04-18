@@ -149,6 +149,14 @@ Always pass `org_id` as query parameter on every API call. Primary test org: `f8
 
 ---
 
+## 4a. Fleet Profile Pages (Spec 0028)
+
+- **ChassisPage** — pool dropdown includes `'Own'` (alongside DCLI/TRAC/Flexi-Van/COCP). Selecting `Own` auto-sets `ownership_type='company_owned'` on the backend; the manual Ownership dropdown has been removed from forms. Reg #, Reg Expiry, DOT Inspection Expiry are in the edit + add forms. REG # and DOT EXPIRY columns are in the main table. Expiry colors: red ≤30d, amber ≤60d.
+- **TrucksPage** — edit drawer + add modal have a Vehicle section (country/rfid_tag/description/truck_spec/tare_weight_lbs) and an Insurance section (policy holder/agency email/policy #/policy start/policy expiry/USDOT/MC). TARE WT (formatted "XX,XXX lbs") and USDOT columns are in the main table.
+- **CustomersPage** — Address (textarea) and Special Instructions (textarea) are in the edit drawer and add modal. ADDRESS column is in the main table, truncated with tooltip. `address` is the billing/company address — delivery addresses stay in `customer_locations` (Spec 0018).
+
+---
+
 ## 5. Container Filter Tabs (user_status)
 
 ContainerTracking.tsx displays containers in tabs based on `user_status`:

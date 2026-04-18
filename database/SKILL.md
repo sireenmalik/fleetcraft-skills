@@ -274,6 +274,48 @@ Forces `ui_status` to the value in `status_conflict`. Returns 409 if no conflict
 
 ---
 
+## 3b. Fleet Profile Fields (Spec 0028)
+
+Migration 028 (2026-04-18) added 16 columns across `customers`, `chassis`, `trucks`.
+
+### customers — 2 columns
+| Column | Type | Purpose |
+|---|---|---|
+| address | TEXT | Billing / company address (delivery addresses remain in `customer_locations`, Spec 0018) |
+| special_instructions | TEXT | Default note used when creating dispatches for this customer |
+
+### chassis — 3 columns
+| Column | Type | Purpose |
+|---|---|---|
+| registration_number | TEXT | State registration number |
+| registration_expiry | DATE | Registration expiry — red ≤30d, amber ≤60d in UI |
+| dot_inspection_expiry | DATE | DOT inspection expiry — red ≤30d, amber ≤60d in UI |
+
+`chassis_pool` now includes `'Own'` (DCLI | TRAC | FlexiVan | COCP | Own). `ownership_type` is auto-derived from pool by container-sync and routes/chassis.js:
+- pool='Own' → ownership_type='company_owned'
+- anything else → ownership_type='pool_rental'
+
+UI no longer exposes `ownership_type`. Do not add it back.
+
+### trucks — 11 columns
+| Column | Type | Purpose |
+|---|---|---|
+| country | TEXT (default 'US') | Registration country |
+| rfid_tag | TEXT | Terminal RFID tag |
+| description | TEXT | Free-form description |
+| truck_spec | TEXT | Technical spec |
+| tare_weight_lbs | INTEGER | Empty weight, displayed as "XX,XXX lbs" in UI |
+| insurance_holder_name | TEXT | Insurance policy holder |
+| insurance_agency_email | TEXT | Agency email |
+| insurance_policy_number | TEXT | Policy number |
+| insurance_start_date | DATE | Policy start |
+| usdot_number | TEXT | USDOT registration |
+| mc_number | TEXT | MC authority |
+
+Insurance fields live on `trucks` (one active policy per truck). Previous `insurance_expiry` column remains the policy expiry date.
+
+---
+
 ## 4. user_status Values
 
 These are user-intent. Only Fleet API endpoints write them.
