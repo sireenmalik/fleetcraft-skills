@@ -58,41 +58,49 @@ at_return_terminal → chassis_returned → returned → completed
 (cancelled can happen from any status)
 ```
 
-### Milestone Flow — Spec 0026 (Milestones Lifecycle v3)
+### Milestone Flow — Spec 0032
 
-**AUTHORITY: fleetcraft-specs/0026-fleetcraft-milestones-spec.md**
-Read this spec before any milestone code change. No exceptions.
+**AUTHORITY: fleetcraft-specs/0032-driver-app.md (Spec 0032)**
+Spec 0032 supersedes Spec 0026. Step numbers match dashboard row numbers (28 columns). Read Spec 0032 before any milestone code change.
 
-17 steps (0-16). 4 auto GPS. 8 manual+photo. 4 manual-only. 1 computed.
+| # | Step | DB field | Type | Photos |
+|---|------|----------|------|--------|
+| 8 | Dispatch created | dispatches.created_at | web UI | — |
+| 9 | Accept/Reject | status: assigned/rejected | manual | — |
+| 10 | Start (en_route_pickup) | en_route_pickup_at | manual | — |
+| 11 | Truck assigned | dispatches.truck_id | web UI | — |
+| 12 | Chassis info pre-term | chassis_info_at | manual+photo (conditional: outside terminal) | 5 |
+| 13 | Geofence (terminal_area_arrived) | queue_start_at | auto GPS | — |
+| 14 | Chassis info post-term | chassis_info_at | manual+photo (conditional: only if step 12 not done) | 5 |
+| 15 | Ingate (at_terminal) | pickup_arrived_at | manual+photo | 1 |
+| 16 | Loaded (container_loaded) | loaded_at | manual+photo | 2+ |
+| 17 | Outgate (gate_out) | pickup_completed_at | manual+photo | 1 |
+| — | Queue | computed: outgate − min(geofence, ingate) | computed | — |
+| 18 | En route delivery (gate_out_detected) | en_route_delivery_at | auto GPS | — |
+| 19 | En route delivery (fallback) | en_route_delivery_at | manual (if step 18 fails) | — |
+| 20 | Delivery ETA (delivery_area_arrived) | delivery_eta_triggered_at | auto GPS | — |
+| 21 | At delivery | delivery_arrived_at | manual+photo | 1 |
+| 22 | POD (pod_captured) | delivery_completed_at | manual+photo | 1 |
+| 23 | Delivered | actual_delivery_at | manual | — |
+| 24 | En route return (en_route_return_detected) | en_route_return_at | auto GPS | — |
+| 25 | At return terminal | return_arrived_at | manual+photo | 3+ |
+| 26 | Chassis returned | return_completed_at | manual+photo | 1 |
+| 27 | Complete | completed_at | auto (fires on step 26) | — |
 
-| # | Step | DB field | Type |
-|---|------|----------|------|
-| 0 | Accept/Reject | status: assigned/rejected | manual |
-| 1 | Start | en_route_pickup_at | manual |
-| 2 | Geofence | queue_start_at | auto GPS |
-| 3 | Chassis info | chassis_info_at | manual+photo (3 modes) |
-| 4 | Ingate | pickup_arrived_at | manual+photo |
-| 5 | Loaded | loaded_at | manual+photo |
-| 6 | Outgate | pickup_completed_at | manual+photo |
-| 7 | Queue | computed | computed |
-| 8 | En route delivery | en_route_delivery_at | auto GPS |
-| 9 | Delivery ETA | delivery_eta_triggered_at | auto GPS |
-| 10 | At delivery | delivery_arrived_at | manual+photo |
-| 11 | POD | delivery_completed_at | manual+photo |
-| 12 | Delivered | actual_delivery_at | manual |
-| 13 | En route return | en_route_return_at | auto GPS |
-| 14 | At return terminal | return_arrived_at | manual+photo |
-| 15 | Chassis returned | return_completed_at | manual+photo |
-| 16 | Complete | completed_at | auto (fires on step 15) |
+Chassis conditional logic (steps 12 and 14):
+- Step 12 (chassis_info_pre_term): chassis yard OUTSIDE terminal polygon. Driver inspects before crossing geofence.
+- Step 14 (chassis_info_post_term): chassis INSIDE terminal polygon. Only fires if chassis_info_at IS NULL after geofence (step 13).
+- Never both. Both write identical data: chassis_info_at, chassis_number, 5 photos, auto-checkout side effect.
+- Dashboard CHSS INFO column (Row 12) shows result regardless of path.
 
-Step 3 modes:
+Step 12/14 modes (applies to whichever chassis step fires):
 - chassis_number NULL → full modal (type number, select pool, 5 photos)
 - chassis_number NOT NULL + pool → streamlined (read-only, 5 photos required)
 - chassis_number NOT NULL + tenant → auto-skip (no photos, auto-advance)
 
 ### Implementation notes (aligned April 2026)
 - `buildMilestoneList` returns 14 items (steps 1-6, 8-15). Steps 0, 7, 16 excluded.
-- Auto milestones (2, 8, 9, 13) are non-tappable — fire via BackgroundServices GPS detection
+- Auto milestones (13, 18, 20, 24) are non-tappable — fire via BackgroundServices GPS detection
 - Step 16 removed from UI — auto-fires server-side when step 15 completes
 - `NEXT_MILESTONE` has no `chassis_returned` entry — prevents manual "Complete" tap
 - PARKED milestones removed from `MILESTONE_ORDER` and `NEXT_MILESTONE` (`in_transit_parked`, `in_transit_parked_return`). Still in `DispatchStatus` type union for backward compat with old dispatches.
@@ -350,7 +358,7 @@ Uses HERE Routing v8 with `terminals.address` as destination (not lat/lng).
 2. `useGpsTracking` accepts geofences array + `onGeofenceEnter` callback
 3. Foreground `watchPositionAsync` fires every 15 seconds
 4. Each GPS position: `isInsidePolygon(lat, lng, vertices)` — ray casting point-in-polygon
-5. If inside polygon → trigger fires
+5. If inside polygon → trigger fires (step 13)
 6. Trigger fires ONCE per dispatch (`geofenceFired` Set keyed by `${dispatchId}:${trigger_event}`)
 7. On fire: calls `POST /api/driver/loads/:id/milestone` with:
    - `milestone: 'terminal_area_arrived'`
@@ -358,6 +366,7 @@ Uses HERE Routing v8 with `terminals.address` as destination (not lat/lng).
    - `triggered_by: 'geofence'`
    - `lat`, `lng`, `occurred_at` from the GPS reading
 8. Driver sees alert: "You entered the terminal area. Queue timer started."
+9. If chassis_info_at IS NULL when geofence fires, chassis_info_post_term (step 14) opens next.
 
 ### Detection window (statuses where geofence is armed):
 - `en_route_pickup` → driver heading to terminal
@@ -427,7 +436,7 @@ One callback serves both — the `triggerEvent` string (`'terminal_area_arrived'
 - `deliveryLoad = loads.find(l => DELIVERY_PHASES.includes(l.status))` — separate from `pickupLoad`
 - `handleGeofenceEnter` switches on `triggerEvent`:
   - `terminal_area_arrived` → pickupLoad, alert "Queue timer started"
-  - `delivery_area_arrived` → deliveryLoad, alert "Customer has been notified"
+  - `delivery_area_arrived` (step 20) → deliveryLoad, alert "Customer has been notified"
 
 ### Detection window
 Armed while `deliveryLoad.status === 'en_route_delivery'`.
@@ -462,12 +471,12 @@ One GPS watcher, four detection paths, one staged-event pipeline, one 8-second u
 
 ### The four detection paths
 
-| Trigger event | Kind | Guard | Armed during |
-|---|---|---|---|
-| `terminal_area_arrived` | polygon entry | 2-tick dwell (~30s) | pickup phases |
-| `delivery_area_arrived` | circle entry | 2-tick dwell (~30s) | `en_route_delivery` |
-| `gate_out_detected` | distance exit | 0.5 mi past polygon bounding circle for 4 ticks (~60s) | `gate_out` / `loaded` / `container_loaded` / `in_transit_parked` |
-| `en_route_return_detected` | distance exit | 0.5 mi from `delivery_lat/lng` for 4 ticks | `delivered` / `pod_captured` / `at_delivery` |
+| Trigger event | Step | Kind | Guard | Armed during |
+|---|---|---|---|---|
+| `terminal_area_arrived` | 13 | polygon entry | 2-tick dwell (~30s) | pickup phases |
+| `delivery_area_arrived` | 20 | circle entry | 2-tick dwell (~30s) | `en_route_delivery` |
+| `gate_out_detected` | 18 | distance exit | 0.5 mi past polygon bounding circle for 4 ticks (~60s) | `gate_out` / `loaded` / `container_loaded` / `in_transit_parked` |
+| `en_route_return_detected` | 24 | distance exit | 0.5 mi from `delivery_lat/lng` for 4 ticks | `delivered` / `pod_captured` / `at_delivery` |
 
 **Rule — distance, not speed, for gate-out.** Terminal yard speeds vary (trucks crawl at 5 mph, stop at intersections). 0.5 mi past the polygon's bounding circle for 60s is definitive. Same logic for return-leg.
 
