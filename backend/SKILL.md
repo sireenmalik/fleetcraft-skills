@@ -247,6 +247,18 @@ WHERE containers.user_status IS NULL
 
 > **Spec 0029 addition:** container-sync.js also enforces a forward-only guard on `ui_status`. The upsert guard (user_status check) and the forward-only guard (status rank check) are BOTH required. They protect different things — user_status prevents sync from overwriting user intent, forward-only prevents status regression.
 
+### Forward-Only Conflict Visibility (Spec 0035)
+
+The forward-only guard still blocks regressions. But when it fires, container-sync now records the blocked value in `containers.status_conflict` (plus `status_conflict_at`, `status_conflict_source_rank`, `status_conflict_source`). The dashboard shows an amber warning badge next to the status. The dispatcher can click "Reset" to force `ui_status` to what the source reported.
+
+`POST /api/containers/reset-status` is a user action, logged to `container_events` with `source='dispatcher'`. It does NOT violate CQRS — the dispatcher makes the call, not the sync worker.
+
+Rules:
+- Do NOT remove the forward-only guard.
+- Do NOT auto-resolve conflicts.
+- Same-status writes are no-ops, not conflicts — only record when source status is genuinely different.
+- The guard stays as a safety net until the full architecture rewrite.
+
 ---
 
 ## 3. Container Archive Flow

@@ -247,6 +247,33 @@ When a dispatch is cancelled, ui_status resets to AVAILABLE (rank 8). The contai
 
 ---
 
+## 3a. Forward-Only Conflict Detection (Spec 0035)
+
+When container-sync's forward-only guard blocks a status regression
+(merged source rank < current Postgres rank AND status genuinely differs),
+four columns record the conflict instead of silently dropping it:
+
+| Column | Type | Purpose |
+|--------|------|---------|
+| status_conflict | TEXT | The ui_status that sources report but guard blocked. NULL = no conflict. |
+| status_conflict_at | TIMESTAMPTZ | When first detected. Keeps earliest detection if same status repeats. |
+| status_conflict_source_rank | INTEGER | Rank of the blocked status. |
+| status_conflict_source | TEXT | Which source produced the blocked status: `findteu`, `ais`, or `merged`. |
+
+### Rules
+- Written by container-sync ONLY when guard blocks a write AND the source status is genuinely different (same-status writes are no-ops, not conflicts).
+- Cleared by: (a) `POST /api/containers/reset-status` (dispatcher action), (b) container-sync when rank advances past the conflict naturally.
+- Reset writes a `container_events` row with `event_type='status_reset'`, `source='dispatcher'`.
+- These columns are ocean/terminal phase only (ranks 1–8). Driver-phase conflicts (ranks 9–18) are not covered.
+
+### Endpoint
+```
+POST /api/containers/reset-status { container_number, org_id }
+```
+Forces `ui_status` to the value in `status_conflict`. Returns 409 if no conflict exists, 404 if container not found, 400 on missing body fields.
+
+---
+
 ## 4. user_status Values
 
 These are user-intent. Only Fleet API endpoints write them.
